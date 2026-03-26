@@ -68,3 +68,20 @@ export type SandboxStatus =
   | "completed"
   | "failed"
   | "destroyed";
+
+/** Stable default tenant for single-tenant dev / v1. */
+export const DEFAULT_TENANT_ID = "00000000-0000-4000-8000-000000000001";
+
+// Events (web channel)
+export interface WebEventPayload {
+  text: string;
+  tenantId?: string;
+  channelRef?: string;
+}
+
+export interface WebEventResult {
+  threadId: string;
+  sessionId: string;
+  runId: string;
+  userMessageId: string;
+}

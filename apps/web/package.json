@@ -10,6 +10,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vela/agent-runtime": "workspace:*",
+    "@vela/channels": "workspace:*",
+    "@vela/control-plane": "workspace:*",
+    "@vela/db": "workspace:*",
+    "@vela/skill-resolver": "workspace:*",
+    "@vela/types": "workspace:*",
+    "drizzle-orm": "^0.36.4",
     "next": "16.2.0",
     "react": "19.2.0",
     "react-dom": "19.2.0"

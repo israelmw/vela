@@ -11,10 +11,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@vela/control-plane": "workspace:*",
+    "@vela/db": "workspace:*",
     "@vela/memory": "workspace:*",
     "@vela/skill-resolver": "workspace:*",
     "@vela/tool-router": "workspace:*",
-    "@vela/types": "workspace:*"
+    "@vela/types": "workspace:*",
+    "ai": "^6.0.0",
+    "drizzle-orm": "^0.36.4"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

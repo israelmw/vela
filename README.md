@@ -12,7 +12,7 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 
 ### Current status
 
-This repository is **early scaffolding**: all `@vela/*` packages typecheck and wire the dependency graph; Drizzle schema + an initial SQL migration ship in `@vela/db`. Runnable apps and channel integrations are still on the [roadmap](#roadmap). Treat this README as the **design contract** as behavior fills in.
+**v0.x vertical slices are implemented:** control plane services, web API (`/api/events/web`, `/api/runs/*`, approvals, Slack webhook stub), agent runtime with policy-gated builtin tools, skill resolver + DB seeds, minimal workflow/sandbox hooks, and a small admin UI (`/runs`, `/approvals`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
@@ -28,6 +28,7 @@ This repository is **early scaffolding**: all `@vela/*` packages typecheck and w
 - [Monorepo Structure](#monorepo-structure)
 - [Resolution Pipeline](#resolution-pipeline)
 - [Roadmap](#roadmap)
+- [Cloud quickstart](#cloud-quickstart)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -721,18 +722,18 @@ The agent receives a fully assembled context. It does not need to discover or ne
 ## Roadmap
 
 ### v1 — Core system
-- [ ] Slack channel (Chat SDK adapter)
-- [ ] Control Plane — full entity schema + Postgres migrations
-- [ ] Agent Runtime — AI SDK tool loop
-- [ ] Skill Resolver — static registry + manual load
-- [ ] Tool Router — builtin + MCP bridge
-- [ ] Policy Engine — tool bindings + basic approval gate
-- [ ] Workflow — simple durable runs (Vercel-native path first; cron/step patterns as needed)
-- [ ] Sandbox — basic isolated executor
+- [x] Slack channel (Events API verification + webhook; Chat SDK adapter later)
+- [x] Control Plane — entity schema + Postgres (Drizzle)
+- [x] Agent Runtime — AI SDK loop + builtin tools
+- [x] Skill Resolver — keyword routing + registry
+- [x] Tool Router — builtin tools (MCP bridge later)
+- [x] Policy Engine — tool bindings + approval gate
+- [ ] Workflow — full durable runs (minimal step recorder in repo)
+- [ ] Sandbox — full isolated executor (Blob snapshot contract stub)
 - [ ] Memory — short-term + working
-- [ ] Admin UI — run inspector, approval queue
-- [ ] 2–3 built-in tools (web search, code eval, channel reply)
-- [ ] 2–3 built-in skills (PR review, issue triage)
+- [x] Admin UI — run inspector, approval queue (minimal)
+- [x] Built-in tools (echo, web search stub, channel reply stub, approval demo)
+- [x] Built-in skills (PR review, issue triage seeds)
 
 ### v2 — Capability expansion
 - [ ] Additional channels (Web, Discord, Teams)
@@ -751,15 +752,26 @@ The agent receives a fully assembled context. It does not need to discover or ne
 
 ---
 
+## Cloud quickstart
+
+1. **Prerequisites:** Node 20+, pnpm 9+, a [Vercel](https://vercel.com) project linked to this repo.
+2. **Neon:** Create a Postgres database (Vercel Marketplace / Neon). Set `DATABASE_URL` on the project and locally in `.env.local`.
+3. **Vercel Blob:** Enable Blob and set `BLOB_READ_WRITE_TOKEN` where uploads are used.
+4. **AI (optional):** Enable AI Gateway on the Vercel project and run `vercel env pull` so `VERCEL_OIDC_TOKEN` and related vars exist locally for `generateText` in the agent runtime.
+5. **Migrate:** From repo root, `pnpm install` then run Drizzle migrations against `DATABASE_URL` (see `@vela/db` scripts `db:generate` / `db:migrate`).
+6. **Run web:** `pnpm dev` (or deploy) — health checks: `GET /api/health/db`, `GET /api/health/blob`. Post a message: `POST /api/events/web` with JSON `{ "text": "hello" }`.
+
+**Slack:** Configure `SLACK_SIGNING_SECRET`, expose `POST /api/channels/slack/events`, and map workspace/channel IDs as needed (see code in `apps/web` and `packages/channels`).
+
+---
+
 ## Contributing
 
-Pull requests are welcome once there is enough code to run and test. Until then:
+See **[CONTRIBUTING.md](./CONTRIBUTING.md)** and **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**. Quick checks before a PR:
 
-- Open issues for design questions or inconsistencies with this README.
-- Proposed **skills** live under `skills/`; **core tools** under `tools/` — follow the contracts in [Skills vs Tools vs MCP vs Subagents](#contracts--skills-vs-tools-vs-mcp-vs-subagents).
-- Run `pnpm install` at the repo root, then `pnpm typecheck` / `pnpm build` when those tasks are wired in packages.
-
-A fuller `CONTRIBUTING.md` can land once the first vertical slice (e.g. Slack webhook → control plane stub) exists.
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm build` (with `.env.local` or CI secrets for DB when applicable)
 
 ---
 
