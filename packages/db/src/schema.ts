@@ -1,5 +1,6 @@
 import {
   pgTable,
+  primaryKey,
   uuid,
   text,
   boolean,
@@ -7,6 +8,7 @@ import {
   jsonb,
   timestamp,
   pgEnum,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -43,6 +45,7 @@ export const runStepTypeEnum = pgEnum("run_step_type", [
 export const runStepStatusEnum = pgEnum("run_step_status", [
   "pending",
   "running",
+  "retrying",
   "completed",
   "failed",
   "skipped",
@@ -173,20 +176,48 @@ export const runs = pgTable("runs", {
   endedAt: timestamp("ended_at"),
 });
 
-export const runSteps = pgTable("run_steps", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  runId: uuid("run_id")
-    .notNull()
-    .references(() => runs.id),
-  stepIndex: integer("step_index").notNull(),
-  type: runStepTypeEnum("type").notNull(),
-  status: runStepStatusEnum("status").notNull().default("pending"),
-  toolName: text("tool_name"),
-  toolInput: jsonb("tool_input"),
-  toolResult: jsonb("tool_result"),
-  startedAt: timestamp("started_at").notNull().defaultNow(),
-  endedAt: timestamp("ended_at"),
-});
+export const runSteps = pgTable(
+  "run_steps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+    stepIndex: integer("step_index").notNull(),
+    type: runStepTypeEnum("type").notNull(),
+    status: runStepStatusEnum("status").notNull().default("pending"),
+    toolName: text("tool_name"),
+    toolInput: jsonb("tool_input"),
+    toolResult: jsonb("tool_result"),
+    attempt: integer("attempt").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    lastError: text("last_error"),
+    nextRetryAt: timestamp("next_retry_at"),
+    idempotencyKey: text("idempotency_key"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    endedAt: timestamp("ended_at"),
+  },
+  (t) => ({
+    idemUnique: uniqueIndex("run_steps_run_id_idempotency_key_unique").on(
+      t.runId,
+      t.idempotencyKey,
+    ),
+  }),
+);
+
+/** Working memory: key-value overlay per session (run-scoped reads via session). */
+export const workingMemory = pgTable(
+  "working_memory",
+  {
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.key] })],
+);
 
 export const skillsRegistry = pgTable("skills_registry", {
   id: text("id").primaryKey(),
@@ -276,6 +307,7 @@ export const artifacts = pgTable("artifacts", {
   runId: uuid("run_id")
     .notNull()
     .references(() => runs.id),
+  runStepId: uuid("run_step_id").references(() => runSteps.id),
   name: text("name").notNull(),
   type: artifactTypeEnum("type").notNull(),
   blobPath: text("blob_path").notNull(),

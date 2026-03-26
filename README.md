@@ -728,9 +728,9 @@ The agent receives a fully assembled context. It does not need to discover or ne
 - [x] Skill Resolver — keyword routing + registry
 - [x] Tool Router — builtin tools (MCP bridge later)
 - [x] Policy Engine — tool bindings + approval gate
-- [ ] Workflow — full durable runs (minimal step recorder in repo)
-- [ ] Sandbox — full isolated executor (Blob snapshot contract stub)
-- [ ] Memory — short-term + working
+- [x] Workflow — durable linear executor (retries, `retrying` + `next_retry_at`, approvals between steps)
+- [x] Sandbox — DB-backed sandbox session + allowlisted ops + Blob snapshot + `artifacts.run_step_id`
+- [x] Memory — short-term transcript window + session `working_memory` KV
 - [x] Admin UI — run inspector, approval queue (minimal)
 - [x] Built-in tools (echo, web search stub, channel reply stub, approval demo)
 - [x] Built-in skills (PR review, issue triage seeds)
@@ -760,6 +760,7 @@ The agent receives a fully assembled context. It does not need to discover or ne
 4. **AI (optional):** Enable AI Gateway on the Vercel project and run `vercel env pull` so `VERCEL_OIDC_TOKEN` and related vars exist locally for `generateText` in the agent runtime.
 5. **Migrate:** From repo root, `pnpm install` then run Drizzle migrations against `DATABASE_URL` (see `@vela/db` scripts `db:generate` / `db:migrate`).
 6. **Run web:** `pnpm dev` (or deploy) — health checks: `GET /api/health/db`, `GET /api/health/blob`. Post a message: `POST /api/events/web` with JSON `{ "text": "hello" }`.
+7. **Durable workflow (dev):** send a message starting with `workflow:` followed by a JSON array of steps (see `@vela/workflow` / `WorkflowStepSpec`). Poke continuation after delays: `POST /api/runs/:id/workflow`. Optional: `VELA_SHORT_TERM_MESSAGE_LIMIT` caps messages loaded into the model context.
 
 **Slack:** Configure `SLACK_SIGNING_SECRET`, expose `POST /api/channels/slack/events`, and map workspace/channel IDs as needed (see code in `apps/web` and `packages/channels`).
 

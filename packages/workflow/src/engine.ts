@@ -8,6 +8,8 @@ export type WorkflowStepSpec = {
   label: string;
   toolName?: string | null;
   toolInput?: unknown;
+  maxAttempts?: number;
+  idempotencyKey?: string;
 };
 
 /**
@@ -35,6 +37,9 @@ export async function recordWorkflowPlan(
     agg?.m !== null && agg?.m !== undefined ? Number(agg.m) + 1 : run.currentStep;
 
   for (const step of params.steps) {
+    const idem =
+      step.idempotencyKey ??
+      `${params.runId}:${idx}:${step.kind}:${step.label}`.slice(0, 400);
     await db.insert(runSteps).values({
       runId: params.runId,
       stepIndex: idx++,
@@ -42,6 +47,8 @@ export async function recordWorkflowPlan(
       status: "pending",
       toolName: step.toolName ?? null,
       toolInput: (step.toolInput ?? null) as object | null,
+      maxAttempts: step.maxAttempts ?? 3,
+      idempotencyKey: idem,
     });
   }
 

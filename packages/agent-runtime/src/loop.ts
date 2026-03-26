@@ -1,10 +1,9 @@
 import { generateText } from "ai";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import {
   approvals,
   agents,
-  messages,
   runSteps,
   runs,
   sessions,
@@ -14,28 +13,31 @@ import {
   completeRun,
   updateRunStatus,
 } from "@vela/control-plane";
+import {
+  formatWorkingMemoryBlock,
+  listWorkingMemory,
+  loadShortTermTranscript,
+  upsertWorkingMemory,
+} from "@vela/memory";
+import {
+  createBuiltinWorkflowStepExecutor,
+  drainWorkflowSteps,
+  recordWorkflowPlan,
+  type WorkflowStepSpec,
+} from "@vela/workflow";
 import { executeBuiltinTool } from "@vela/tool-router";
 
-/** Load recent transcript as plain text for the model. */
-async function buildPrompt(db: DB, sessionId: string) {
-  const rows = await db
-    .select()
-    .from(messages)
-    .where(eq(messages.sessionId, sessionId))
-    .orderBy(asc(messages.createdAt));
-
-  return rows
-    .map((m) => {
-      const c = m.content as { text?: string } | string;
-      const body = typeof c === "string" ? c : (c.text ?? JSON.stringify(c));
-      return `${m.role}: ${body}`;
-    })
-    .join("\n");
+function attachUserText(transcript: string): string {
+  const lastUserLine = transcript
+    .split("\n")
+    .filter((l) => l.startsWith("user:"))
+    .pop();
+  return lastUserLine?.replace(/^user:\s*/, "").trim() ?? "";
 }
 
 /**
  * Single-turn agent: reasoning step + optional vela.echo if user text mentions "echo:".
- * Full multi-step tool loop expands in later iterations.
+ * `workflow:[...]` runs a persisted multi-step plan (durable retries + approvals).
  */
 export async function runAgentTurn(db: DB, runId: string): Promise<void> {
   const [run] = await db
@@ -65,22 +67,77 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
   await updateRunStatus(db, run.id, { status: "running" });
 
   let stepIndex = run.currentStep;
-  const transcript = await buildPrompt(db, run.sessionId);
+  const transcript = await loadShortTermTranscript(db, run.sessionId);
+  const wm = await listWorkingMemory(db, run.sessionId);
+  const wmBlock = formatWorkingMemoryBlock(wm);
+  const contextForModel = wmBlock
+    ? `${wmBlock}\n\nConversation:\n${transcript}`
+    : `Conversation:\n${transcript}`;
 
-  const [reasonStep] = await db
-    .insert(runSteps)
-    .values({
-      runId: run.id,
-      stepIndex: stepIndex++,
-      type: "reasoning",
-      status: "running",
-    })
-    .returning();
+  const userText = attachUserText(transcript);
 
   try {
-    const lastUserLine = transcript.split("\n").filter((l) => l.startsWith("user:")).pop();
-    const userText =
-      lastUserLine?.replace(/^user:\s*/, "").trim() ?? "";
+    if (userText.toLowerCase().startsWith("workflow:")) {
+      const raw = userText.slice("workflow:".length).trim();
+      let steps: WorkflowStepSpec[];
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("expected JSON array");
+        steps = parsed as WorkflowStepSpec[];
+      } catch {
+        await completeRun(db, run.id, null, "invalid workflow JSON");
+        return;
+      }
+
+      await recordWorkflowPlan(db, { runId: run.id, steps });
+      const executor = createBuiltinWorkflowStepExecutor({
+        db,
+        agentId: run.agentId,
+        tenantId: session.tenantId,
+        sessionId: run.sessionId,
+        runId: run.id,
+      });
+      const drain = await drainWorkflowSteps(db, {
+        runId: run.id,
+        agentId: run.agentId,
+        tenantId: session.tenantId,
+        sessionId: run.sessionId,
+        executor,
+        maxSteps: 40,
+      });
+
+      if (drain.halt === "approval") {
+        return;
+      }
+      if (drain.halt === "fatal") {
+        await completeRun(db, run.id, null, drain.message ?? "workflow failed");
+        return;
+      }
+
+      const summary = `workflow ok (${drain.processed} steps executed)`;
+      await appendMessage(db, {
+        sessionId: run.sessionId,
+        threadId: session.threadId,
+        role: "assistant",
+        content: { text: summary },
+      });
+      await db
+        .update(runs)
+        .set({ currentStep: stepIndex + drain.processed })
+        .where(eq(runs.id, run.id));
+      await completeRun(db, run.id, summary.slice(0, 500), null);
+      return;
+    }
+
+    const [reasonStep] = await db
+      .insert(runSteps)
+      .values({
+        runId: run.id,
+        stepIndex: stepIndex++,
+        type: "reasoning",
+        status: "running",
+      })
+      .returning();
 
     if (userText.toLowerCase().startsWith("risky:")) {
       const args = { note: userText.slice(5).trim() };
@@ -162,7 +219,7 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
     const { text } = await generateText({
       model: agent.model,
       system: agent.systemPrompt,
-      prompt: `Conversation:\n${transcript}\n\nassistant:`,
+      prompt: `${contextForModel}\n\nassistant:`,
     });
 
     await db
@@ -182,13 +239,36 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
       .set({ currentStep: stepIndex })
       .where(eq(runs.id, run.id));
 
+    if (userText) {
+      await upsertWorkingMemory(db, {
+        sessionId: run.sessionId,
+        key: "last_exchange",
+        value: {
+          user: userText.slice(0, 2000),
+          assistant: text.slice(0, 2000),
+          at: new Date().toISOString(),
+        },
+      });
+    }
+
     await completeRun(db, run.id, text.slice(0, 500), null);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await db
-      .update(runSteps)
-      .set({ status: "failed", endedAt: new Date() })
-      .where(eq(runSteps.id, reasonStep!.id));
+    const [runningStep] = await db
+      .select()
+      .from(runSteps)
+      .where(
+        and(eq(runSteps.runId, run.id), eq(runSteps.status, "running")),
+      )
+      .orderBy(asc(runSteps.stepIndex))
+      .limit(1);
+
+    if (runningStep) {
+      await db
+        .update(runSteps)
+        .set({ status: "failed", endedAt: new Date(), lastError: msg })
+        .where(eq(runSteps.id, runningStep.id));
+    }
     await completeRun(db, run.id, null, msg);
   }
 }

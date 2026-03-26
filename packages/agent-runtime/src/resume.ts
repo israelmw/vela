@@ -2,6 +2,10 @@ import { eq } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import { approvals, runs, runSteps, sessions } from "@vela/db";
 import { appendMessage, completeRun } from "@vela/control-plane";
+import {
+  createBuiltinWorkflowStepExecutor,
+  drainWorkflowSteps,
+} from "@vela/workflow";
 import { executeApprovedBuiltinTool } from "@vela/tool-router";
 
 export async function resumeApprovedToolCall(
@@ -94,7 +98,48 @@ export async function resumeApprovedToolCall(
     content: { text: summary },
   });
 
-  await completeRun(db, run.id, summary.slice(0, 500), null);
+  await db
+    .update(runs)
+    .set({ status: "running", requiresApproval: false })
+    .where(eq(runs.id, run.id));
+
+  const executor = createBuiltinWorkflowStepExecutor({
+    db,
+    agentId: run.agentId,
+    tenantId: session.tenantId,
+    sessionId: run.sessionId,
+    runId: run.id,
+  });
+
+  const drain = await drainWorkflowSteps(db, {
+    runId: run.id,
+    agentId: run.agentId,
+    tenantId: session.tenantId,
+    sessionId: run.sessionId,
+    executor,
+    maxSteps: 40,
+  });
+
+  if (drain.halt === "approval") {
+    return { runId: run.id, output: result.output };
+  }
+
+  if (drain.halt === "fatal") {
+    await completeRun(db, run.id, null, drain.message ?? "workflow failed");
+    return { error: drain.message ?? "workflow failed" };
+  }
+
+  if (drain.done) {
+    await completeRun(db, run.id, summary.slice(0, 500), null);
+  } else {
+    await completeRun(
+      db,
+      run.id,
+      null,
+      drain.message ?? "workflow did not complete",
+    );
+    return { error: drain.message ?? "workflow did not complete" };
+  }
 
   return { runId: run.id, output: result.output };
 }

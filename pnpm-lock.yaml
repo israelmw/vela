@@ -44,6 +44,9 @@ importers:
       '@vela/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@vela/workflow':
+        specifier: workspace:*
+        version: link:../../packages/workflow
       drizzle-orm:
         specifier: ^0.36.4
         version: 0.36.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.0)
@@ -90,6 +93,9 @@ importers:
       '@vela/types':
         specifier: workspace:*
         version: link:../types
+      '@vela/workflow':
+        specifier: workspace:*
+        version: link:../workflow
       ai:
         specifier: ^6.0.0
         version: 6.0.139(zod@4.3.6)
@@ -160,6 +166,9 @@ importers:
       '@vela/types':
         specifier: workspace:*
         version: link:../types
+      drizzle-orm:
+        specifier: ^0.36.4
+        version: 0.36.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.0)
     devDependencies:
       typescript:
         specifier: ^5.4.0
@@ -183,12 +192,18 @@ importers:
 
   packages/sandbox:
     dependencies:
+      '@vela/db':
+        specifier: workspace:*
+        version: link:../db
       '@vela/types':
         specifier: workspace:*
         version: link:../types
       '@vercel/blob':
         specifier: ^0.27.0
         version: 0.27.3
+      drizzle-orm:
+        specifier: ^0.36.4
+        version: 0.36.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.0)
     devDependencies:
       typescript:
         specifier: ^5.4.0
@@ -243,6 +258,9 @@ importers:
       '@vela/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      '@vela/tool-router':
+        specifier: workspace:*
+        version: link:../tool-router
       '@vela/types':
         specifier: workspace:*
         version: link:../types

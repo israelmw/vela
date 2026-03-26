@@ -1,7 +1,9 @@
 export type { SandboxStatus } from "@vela/types";
+export { sandboxes } from "@vela/db";
 export {
-  createSandboxStub,
-  destroySandboxStub,
+  createSandboxForRun,
+  destroySandboxForRun,
+  executeSandboxOperation,
   snapshotSandboxState,
 } from "./lifecycle";
 export type { SandboxHandle } from "./lifecycle";

@@ -14,6 +14,7 @@
     "@vela/control-plane": "workspace:*",
     "@vela/db": "workspace:*",
     "@vela/memory": "workspace:*",
+    "@vela/workflow": "workspace:*",
     "@vela/skill-resolver": "workspace:*",
     "@vela/tool-router": "workspace:*",
     "@vela/types": "workspace:*",

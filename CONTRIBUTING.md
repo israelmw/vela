@@ -17,7 +17,7 @@ pnpm test
 pnpm dev   # runs turbo dev; web app lives in apps/web
 ```
 
-Copy `.env.example` to `.env.local` and fill `DATABASE_URL` (and optional Blob / Slack / OIDC vars). Run migrations from `@vela/db` when the schema changes.
+Copy `.env.example` to `.env.local` and fill `DATABASE_URL` (and optional Blob / Slack / OIDC vars). Run migrations from `@vela/db` when the schema changes (e.g. `0001_workflow_memory_retry.sql` adds durable step fields + `working_memory`).
 
 ## Repository layout
 
