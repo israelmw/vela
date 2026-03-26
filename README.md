@@ -6,6 +6,14 @@
 
 Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serverless environments.
 
+### Project scope
+
+**Vela is intentionally Vercel-first.** The design targets Vercel primitives you already run in production: Fluid Compute, AI Gateway (model strings + OIDC), Blob, routing, and (when you need it) durable workflow patterns compatible with that stack. Porting to other clouds is not a goal for early versions; if abstractions fall out naturally later, they can be documented then.
+
+### Current status
+
+This repository is **early scaffolding**: the workspace and package boundaries exist; runnable apps, migrations, and channel integrations are still on the [roadmap](#roadmap). Treat this README as the **design contract** until the code catches up.
+
 ---
 
 ## Table of Contents
@@ -20,6 +28,8 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 - [Monorepo Structure](#monorepo-structure)
 - [Resolution Pipeline](#resolution-pipeline)
 - [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -153,7 +163,7 @@ The Control Plane is only as strong as its data model. These are the core entiti
   id: uuid
   name: string
   description: string
-  model: string                   // e.g. "gpt-4o", "claude-3-5-sonnet"
+  model: string                   // e.g. AI Gateway: "anthropic/claude-sonnet-4.6", "openai/gpt-5.4"
   system_prompt: string
   default_skills: string[]        // skill IDs preloaded on every session
   allowed_channels: string[]
@@ -556,7 +566,7 @@ The Workflow layer coordinates. The Sandbox layer only executes.
 
 ```
 /
-├── apps/
+├── apps/                           # (planned) not in repo yet
 │   ├── web/                        # Admin UI + observability dashboard (Next.js)
 │   └── docs/                       # Public documentation site
 │
@@ -650,6 +660,7 @@ The Workflow layer coordinates. The Sandbox layer only executes.
 │
 ├── turbo.json
 ├── pnpm-workspace.yaml
+├── LICENSE                         # MIT — full legal text
 └── README.md
 ```
 
@@ -716,7 +727,7 @@ The agent receives a fully assembled context. It does not need to discover or ne
 - [ ] Skill Resolver — static registry + manual load
 - [ ] Tool Router — builtin + MCP bridge
 - [ ] Policy Engine — tool bindings + basic approval gate
-- [ ] Workflow — simple durable runs (Inngest or Vercel Cron-backed)
+- [ ] Workflow — simple durable runs (Vercel-native path first; cron/step patterns as needed)
 - [ ] Sandbox — basic isolated executor
 - [ ] Memory — short-term + working
 - [ ] Admin UI — run inspector, approval queue
@@ -742,10 +753,16 @@ The agent receives a fully assembled context. It does not need to discover or ne
 
 ## Contributing
 
-> Contributing guide coming soon.
+Pull requests are welcome once there is enough code to run and test. Until then:
+
+- Open issues for design questions or inconsistencies with this README.
+- Proposed **skills** live under `skills/`; **core tools** under `tools/` — follow the contracts in [Skills vs Tools vs MCP vs Subagents](#contracts--skills-vs-tools-vs-mcp-vs-subagents).
+- Run `pnpm install` at the repo root, then `pnpm typecheck` / `pnpm build` when those tasks are wired in packages.
+
+A fuller `CONTRIBUTING.md` can land once the first vertical slice (e.g. Slack webhook → control plane stub) exists.
 
 ---
 
 ## License
 
-> License MIT.
+Licensed under the **MIT License** — see [`LICENSE`](./LICENSE) for the full text. That file is what redistributors and lawyers look for; a one-line mention in the README is not a substitute.
