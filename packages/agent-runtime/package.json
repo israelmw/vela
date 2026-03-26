@@ -1,0 +1,22 @@
+{
+  "name": "@vela/agent-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@vela/memory": "workspace:*",
+    "@vela/skill-resolver": "workspace:*",
+    "@vela/tool-router": "workspace:*",
+    "@vela/types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

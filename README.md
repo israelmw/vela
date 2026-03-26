@@ -12,7 +12,7 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 
 ### Current status
 
-This repository is **early scaffolding**: the workspace and package boundaries exist; runnable apps, migrations, and channel integrations are still on the [roadmap](#roadmap). Treat this README as the **design contract** until the code catches up.
+This repository is **early scaffolding**: all `@vela/*` packages typecheck and wire the dependency graph; Drizzle schema + an initial SQL migration ship in `@vela/db`. Runnable apps and channel integrations are still on the [roadmap](#roadmap). Treat this README as the **design contract** as behavior fills in.
 
 ---
 
