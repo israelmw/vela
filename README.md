@@ -12,7 +12,7 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 
 ### Current status
 
-**v2 capability expansion (current slice):** Web + Slack + Discord + Teams ingest through the shared control plane; chat platforms use the **[Vercel Chat SDK](https://chat-sdk.dev/)** (`chat`, `@chat-adapter/*`) into **`apps/web/lib/ingest.ts`**; secret bindings support **active / expired / revoked** with rotate/revoke APIs and policy enforcement when `tools_registry.required_secret_provider` is set; **long-term memory** (opt-in via `VELA_LONG_TERM_MEMORY`) with embedding + cosine retrieval; **MCP registry** with sync/discovery and policy-gated execution; **run_events** for step-level observability in the admin UI (`/runs`, `/runs/[id]`, `/secrets`, `/mcp`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
+**v2 capability expansion (current slice):** Web + Slack + Discord + Teams ingest through the shared control plane; chat platforms use the **[Vercel Chat SDK](https://chat-sdk.dev/)** (`chat`, `@chat-adapter/*`) into **`apps/web/lib/ingest.ts`**; secret bindings support **active / expired / revoked** with rotate/revoke APIs and policy enforcement when `tools_registry.required_secret_provider` is set; **long-term memory** (opt-in via `VELA_LONG_TERM_MEMORY`) with embedding + cosine retrieval; **MCP registry** with sync/discovery and policy-gated execution; **run_events** for step-level observability in the admin console (`/console/runs`, `/console/runs/[id]`, `/console/secrets`, `/console/mcp`, etc.). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
@@ -673,7 +673,7 @@ Shipping as **MIT-licensed infrastructure**: self-hosted operator tooling and co
 
 - [x] Advanced approval workflows — `approvals` supports **`quorum_required`**, **`votes`**, **`expires_at`** (expired approvals fail the run via **`expireStaleApprovals`**), and **`POST /api/approvals/:id`** rejects only with a **non-empty reason** (`rejectApproval`)
 - [x] Dynamic subagent spawning — child **`runs`** with **`parent_run_id`**, **`subagent_depth`**, **`MAX_SUBAGENT_DEPTH = 3`**, and **`subagent:`** prefix in the agent loop (**`packages/agent-runtime/src/subagent.ts`**)
-- [x] Capability marketplace (OSS install path) — **`capability_packages`** / **`capability_installs`**, **`@vela/capabilities`**, **`GET`/`POST /api/capabilities`**, admin UI **`/capabilities`**
+- [x] Skill packs / OSS install path — **`capability_packages`** / **`capability_installs`**, **`@vela/capabilities`**, **`GET`/`POST /api/capabilities`**, admin console **`/console/skills`** (redirect from **`/console/capabilities`**). Packs bundle **skills** + tool refs; aligns conceptually with portable registries like **[skills.sh](https://skills.sh)** (SKILL.md ecosystem); deep import from that directory is not wired yet.
 
 ---
 
@@ -684,7 +684,7 @@ Shipping as **MIT-licensed infrastructure**: self-hosted operator tooling and co
 3. **Vercel Blob:** Enable Blob and set `BLOB_READ_WRITE_TOKEN` where uploads are used.
 4. **AI (optional):** Enable AI Gateway on the Vercel project and run `vercel env pull` so `VERCEL_OIDC_TOKEN` and related vars exist locally for `generateText` in the agent runtime.
 5. **Migrate:** From repo root, `pnpm install` then run Drizzle migrations against `DATABASE_URL` (see `@vela/db` scripts `db:generate` / `db:migrate`).
-6. **Run web:** `pnpm dev` (or deploy) — health: `GET /api/health/db`, `GET /api/health/blob`. Ingest: `POST /api/events/web` with JSON `{ "text": "hello" }`. Admin: `/`, `/runs`, `/runs/[id]`, `/approvals`, `/capabilities`, `/secrets`, `/mcp`.
+6. **Run web:** `pnpm dev` (or deploy) — health: `GET /api/health/db`, `GET /api/health/blob`. Ingest: `POST /api/events/web` with JSON `{ "text": "hello" }`. Admin: landing `/`, UI under `/console/*` only (runs, workflows, approvals, skills, secrets, agents, MCP).
 7. **Durable workflow (dev):** message starting with `workflow:` + JSON step array; continue with `POST /api/runs/:id/workflow`. Step args may include `quorumRequired`, `expiresInMinutes`, `approvalType` (see `@vela/workflow` / `approval-meta`).
 8. **Secrets & MCP (v2):** `GET`/`POST /api/secrets`, `POST /api/secrets/:id/rotate`, `POST /api/secrets/:id/revoke`. `GET`/`POST /api/mcp` to sync discovered tools. Optional **`VELA_LONG_TERM_MEMORY`** / **`VELA_EMBEDDING_MODEL`** (see **`.env.example`**).
 9. **Chat SDK channels:** Configure **[Chat SDK](https://chat-sdk.dev/)** env vars from **`.env.example`**: **`SLACK_BOT_TOKEN`** + **`SLACK_SIGNING_SECRET`**; **`DISCORD_BOT_TOKEN`** + **`DISCORD_PUBLIC_KEY`** + **`DISCORD_APPLICATION_ID`**; **`TEAMS_APP_ID`** + **`TEAMS_APP_PASSWORD`** (and tenant if required). Set **`REDIS_URL`** in production so subscriptions survive serverless cold starts. Endpoints: `POST /api/channels/slack/events`, `POST /api/channels/discord/interactions`, `POST /api/channels/teams/messages`. The web app lists **`discord.js`** / **`zlib-sync`** as **`serverExternalPackages`** so Turbopack can build; at runtime the Discord adapter resolves optional native deps like any Node bot.

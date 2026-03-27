@@ -1,8 +1,10 @@
+import { expireStaleApprovals } from "@vela/agent-runtime";
 import { db, approvals } from "@vela/db";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function GET() {
+  await expireStaleApprovals(db);
   const rows = await db
     .select({
       id: approvals.id,

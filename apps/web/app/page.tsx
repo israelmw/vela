@@ -161,13 +161,13 @@ export default function LandingPage() {
                     View runs
                   </Button>
                 </Link>
-                <Link href="/capabilities">
+                <Link href="/console/skills">
                   <Button
                     size="lg"
                     variant="outline"
                     className="border-[#1f2635] text-[#a9b1c4] hover:bg-[#1f2635] font-mono bg-transparent"
                   >
-                    Capability packs
+                    Skills
                   </Button>
                 </Link>
               </div>

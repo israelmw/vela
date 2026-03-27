@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Terminal, Workflow, CheckSquare, Key, Cpu, Plug } from "lucide-react";
+import { Terminal, Workflow, CheckSquare, Key, Cpu, Library, Plug } from "lucide-react";
 import { Button } from "../components/ui/button";
 import {
   Select,
@@ -19,6 +19,7 @@ const navItems = [
   { label: "Approvals", icon: CheckSquare, href: "/console/approvals" },
   { label: "Secrets", icon: Key, href: "/console/secrets" },
   { label: "Agents", icon: Cpu, href: "/console/agents" },
+  { label: "Skills", icon: Library, href: "/console/skills" },
   { label: "MCP", icon: Plug, href: "/console/mcp" },
 ];
 

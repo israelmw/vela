@@ -26,7 +26,7 @@ export function PostMessageForm() {
         return;
       }
       setText("");
-      router.push(`/runs/${json.runId}`);
+      router.push(`/console/runs/${json.runId}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

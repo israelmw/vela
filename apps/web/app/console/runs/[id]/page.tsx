@@ -5,7 +5,7 @@ import { asc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-export default async function RunDetailPage({
+export default async function ConsoleRunDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -33,7 +33,7 @@ export default async function RunDetailPage({
       <section className="card flat">
         <div className="row-between">
           <h1 className="mono">Run {id}</h1>
-          <Link className="link" href="/runs">
+          <Link className="link" href="/console/runs">
             Back
           </Link>
         </div>
