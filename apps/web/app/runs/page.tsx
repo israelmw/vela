@@ -1,18 +1,54 @@
 import { listRecentRuns } from "@vela/control-plane";
 import { db } from "@vela/db";
+import type { runs } from "@vela/db";
 import Link from "next/link";
 
-export default async function RunsPage() {
-  const rows = await listRecentRuns(db, 50);
+type RunStatus = (typeof runs.$inferSelect)["status"];
+
+export default async function RunsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const sp = await searchParams;
+  const st = sp.status;
+  const statusFilter =
+    st &&
+    [
+      "pending",
+      "running",
+      "awaiting_approval",
+      "completed",
+      "failed",
+      "cancelled",
+    ].includes(st)
+      ? (st as RunStatus)
+      : undefined;
+
+  const rows = await listRecentRuns(db, 50, statusFilter);
 
   return (
     <main className="container wide">
       <section className="card flat">
         <div className="row-between">
           <h1>Runs</h1>
-          <Link className="link" href="/">
-            Home
-          </Link>
+          <div className="row gap">
+            <Link className="link" href="/runs">
+              All
+            </Link>
+            <Link className="link muted small" href="/runs?status=running">
+              running
+            </Link>
+            <Link className="link muted small" href="/runs?status=failed">
+              failed
+            </Link>
+            <Link className="link muted small" href="/runs?status=completed">
+              completed
+            </Link>
+            <Link className="link" href="/">
+              Home
+            </Link>
+          </div>
         </div>
         <table className="table">
           <thead>

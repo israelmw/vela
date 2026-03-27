@@ -2,8 +2,17 @@ import { and, eq } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import { toolBindings, toolsRegistry } from "@vela/db";
 import type { PolicyResult } from "@vela/types";
+import { findActiveSecretBinding } from "./secrets";
 
 export type { DB } from "@vela/db";
+export {
+  createSecretBinding,
+  expireStaleSecretBindings,
+  findActiveSecretBinding,
+  listSecretBindings,
+  revokeSecretBinding,
+  rotateSecretBinding,
+} from "./secrets";
 
 export async function canUseTool(
   db: DB,
@@ -29,6 +38,22 @@ export async function canUseTool(
       requires_approval: false,
       approval_id: null,
     };
+  }
+
+  if (tool.requiredSecretProvider) {
+    const secret = await findActiveSecretBinding(db, {
+      tenantId: params.tenantId,
+      agentId: params.agentId,
+      provider: tool.requiredSecretProvider,
+    });
+    if (!secret) {
+      return {
+        allowed: false,
+        reason: `Missing active secret for provider: ${tool.requiredSecretProvider}`,
+        requires_approval: false,
+        approval_id: null,
+      };
+    }
   }
 
   const [binding] = await db

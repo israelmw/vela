@@ -1,6 +1,6 @@
-import { resumeApprovedToolCall } from "@vela/agent-runtime";
+import { rejectApproval, resumeApprovedToolCall } from "@vela/agent-runtime";
 import { db } from "@vela/db";
-import { approvals, runSteps, runs } from "@vela/db";
+import { approvals } from "@vela/db";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -12,6 +12,7 @@ export async function POST(
   const body = (await req.json()) as {
     action?: "approve" | "reject";
     by?: string;
+    reason?: string;
   };
 
   const action = body.action;
@@ -33,35 +34,23 @@ export async function POST(
   }
 
   if (appr.status !== "pending") {
-    return NextResponse.json({ error: "approval not pending" }, { status: 409 });
+    return NextResponse.json(
+      { error: "approval not pending" },
+      { status: 409 },
+    );
   }
 
   const by = typeof body.by === "string" ? body.by : "dashboard";
 
   if (action === "reject") {
-    await db
-      .update(approvals)
-      .set({
-        status: "rejected",
-        resolvedAt: new Date(),
-        resolvedBy: by,
-      })
-      .where(eq(approvals.id, id));
-
-    await db
-      .update(runSteps)
-      .set({ status: "skipped", endedAt: new Date() })
-      .where(eq(runSteps.id, appr.runStepId));
-
-    await db
-      .update(runs)
-      .set({
-        status: "cancelled",
-        endedAt: new Date(),
-        error: "approval rejected",
-      })
-      .where(eq(runs.id, appr.runId));
-
+    const r = await rejectApproval(db, {
+      approvalId: id,
+      actor: by,
+      reason: typeof body.reason === "string" ? body.reason : "",
+    });
+    if ("error" in r) {
+      return NextResponse.json({ error: r.error }, { status: 400 });
+    }
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
@@ -72,6 +61,15 @@ export async function POST(
 
   if ("error" in result) {
     return NextResponse.json({ error: result.error }, { status: 400 });
+  }
+
+  if ("quorumPending" in result && result.quorumPending) {
+    return NextResponse.json({
+      ok: true,
+      quorumPending: true,
+      approveCount: result.approveCount,
+      quorumRequired: result.quorumRequired,
+    });
   }
 
   return NextResponse.json({ ok: true, ...result });

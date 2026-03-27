@@ -20,11 +20,17 @@ export async function POST(req: Request) {
     const channelRef =
       typeof body.channelRef === "string" ? body.channelRef : "default-web";
 
+    const requestId =
+      req.headers.get("x-request-id") ??
+      req.headers.get("X-Request-Id") ??
+      crypto.randomUUID();
+
     const result = await ingestUserMessage({
       text,
       tenantId,
       channel: "web",
       channelRef,
+      requestId,
     });
 
     return NextResponse.json(result);

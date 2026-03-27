@@ -7,6 +7,19 @@ import {
   drainWorkflowSteps,
 } from "@vela/workflow";
 import { executeApprovedBuiltinTool } from "@vela/tool-router";
+import type { ApprovalVote } from "@vela/types";
+import { expireStaleApprovals, parseVotes } from "./approvals";
+import { runAgentTurn } from "./loop";
+import { runChildSubagentRun } from "./subagent";
+
+export type ResumeApprovedResult =
+  | { runId: string; output: unknown }
+  | { error: string }
+  | {
+      quorumPending: true;
+      approveCount: number;
+      quorumRequired: number;
+    };
 
 export async function resumeApprovedToolCall(
   db: DB,
@@ -14,7 +27,9 @@ export async function resumeApprovedToolCall(
     approvalId: string;
     resolvedBy: string;
   },
-): Promise<{ runId: string; output: unknown } | { error: string }> {
+): Promise<ResumeApprovedResult> {
+  await expireStaleApprovals(db);
+
   const [appr] = await db
     .select()
     .from(approvals)
@@ -27,6 +42,14 @@ export async function resumeApprovedToolCall(
 
   if (appr.status !== "pending") {
     return { error: "Approval is not pending" };
+  }
+
+  if (appr.expiresAt && appr.expiresAt < new Date()) {
+    await db
+      .update(approvals)
+      .set({ status: "expired", resolvedAt: new Date() })
+      .where(eq(approvals.id, appr.id));
+    return { error: "Approval expired" };
   }
 
   const [run] = await db
@@ -55,18 +78,49 @@ export async function resumeApprovedToolCall(
     return { error: "Invalid approval payload" };
   }
 
+  const by = params.resolvedBy;
+  const prev = parseVotes(appr.votes);
+  const dupApprove = prev.some((v) => v.actor === by && v.action === "approve");
+  const nextVotes: ApprovalVote[] = dupApprove
+    ? prev
+    : [
+        ...prev,
+        {
+          actor: by,
+          action: "approve",
+          at: new Date().toISOString(),
+        },
+      ];
+
+  const approveCount = nextVotes.filter((v) => v.action === "approve").length;
+  const quorumRequired = appr.quorumRequired ?? 1;
+
+  if (approveCount < quorumRequired) {
+    await db
+      .update(approvals)
+      .set({ votes: nextVotes as unknown as object })
+      .where(eq(approvals.id, appr.id));
+    return {
+      quorumPending: true,
+      approveCount,
+      quorumRequired,
+    };
+  }
+
   await db
     .update(approvals)
     .set({
+      votes: nextVotes as unknown as object,
       status: "approved",
       resolvedAt: new Date(),
-      resolvedBy: params.resolvedBy,
+      resolvedBy: by,
     })
     .where(eq(approvals.id, params.approvalId));
 
   const result = await executeApprovedBuiltinTool(db, {
     agentId: run.agentId,
     tenantId: session.tenantId,
+    sessionId: session.id,
     toolId: payload.toolId,
     args: payload.args ?? {},
   });
@@ -109,6 +163,18 @@ export async function resumeApprovedToolCall(
     tenantId: session.tenantId,
     sessionId: run.sessionId,
     runId: run.id,
+    spawnSubagent: ({ goal }) =>
+      runChildSubagentRun(
+        db,
+        {
+          id: run.id,
+          sessionId: run.sessionId,
+          agentId: run.agentId,
+          subagentDepth: run.subagentDepth,
+        },
+        goal,
+        (d, id) => runAgentTurn(d, id),
+      ),
   });
 
   const drain = await drainWorkflowSteps(db, {

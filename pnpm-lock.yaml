@@ -29,6 +29,9 @@ importers:
       '@vela/agent-runtime':
         specifier: workspace:*
         version: link:../../packages/agent-runtime
+      '@vela/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
       '@vela/channels':
         specifier: workspace:*
         version: link:../../packages/channels
@@ -38,9 +41,15 @@ importers:
       '@vela/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@vela/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
       '@vela/skill-resolver':
         specifier: workspace:*
         version: link:../../packages/skill-resolver
+      '@vela/tool-router':
+        specifier: workspace:*
+        version: link:../../packages/tool-router
       '@vela/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -107,6 +116,22 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/capabilities:
+    dependencies:
+      '@vela/db':
+        specifier: workspace:*
+        version: link:../db
+      '@vela/types':
+        specifier: workspace:*
+        version: link:../types
+      drizzle-orm:
+        specifier: ^0.36.4
+        version: 0.36.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.0)
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/channels:
     dependencies:
       '@vela/control-plane':
@@ -115,6 +140,9 @@ importers:
       '@vela/types':
         specifier: workspace:*
         version: link:../types
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
     devDependencies:
       typescript:
         specifier: ^5.4.0
@@ -166,6 +194,9 @@ importers:
       '@vela/types':
         specifier: workspace:*
         version: link:../types
+      ai:
+        specifier: ^6.0.0
+        version: 6.0.139(zod@4.3.6)
       drizzle-orm:
         specifier: ^0.36.4
         version: 0.36.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.0)
@@ -1593,6 +1624,9 @@ packages:
     resolution: {integrity: sha512-Rb4qk5YT8RUwwdXtkLpkVhNEe/lor6+WV7S5tTlLpxSz6MjV5Qi8jGNn4gS6NAvrYGA/rNrE6YUQM85sCZUDbQ==}
     hasBin: true
 
+  tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -2666,6 +2700,8 @@ snapshots:
       '@turbo/linux-arm64': 2.8.20
       '@turbo/windows-64': 2.8.20
       '@turbo/windows-arm64': 2.8.20
+
+  tweetnacl@1.0.3: {}
 
   typescript@5.9.3: {}
 

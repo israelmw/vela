@@ -66,11 +66,14 @@ export async function POST(req: Request) {
   }
 
   try {
+    const rid =
+      req.headers.get("x-request-id") ?? req.headers.get("X-Request-Id");
     await ingestUserMessage({
       text,
       tenantId: DEFAULT_TENANT_ID,
       channel: "slack",
       channelRef: `${channel}:${threadTs}`,
+      ...(rid ? { requestId: rid } : {}),
     });
   } catch (e) {
     console.error("[slack events]", e);

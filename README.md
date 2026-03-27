@@ -12,7 +12,7 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 
 ### Current status
 
-**v0.x vertical slices are implemented:** control plane services, web API (`/api/events/web`, `/api/runs/*`, approvals, Slack webhook stub), agent runtime with policy-gated builtin tools, skill resolver + DB seeds, minimal workflow/sandbox hooks, and a small admin UI (`/runs`, `/approvals`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
+**v2 capability expansion (current slice):** Web + Slack + Discord (interactions) + Teams (activity) ingest into the same pipeline; secret bindings support **active / expired / revoked** with rotate/revoke APIs and policy enforcement when `tools_registry.required_secret_provider` is set; **long-term memory** (opt-in via `VELA_LONG_TERM_MEMORY`) with embedding + cosine retrieval; **MCP registry** with sync/discovery and policy-gated execution; **run_events** for step-level observability in the admin UI (`/runs`, `/runs/[id]`, `/secrets`, `/mcp`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
@@ -736,19 +736,19 @@ The agent receives a fully assembled context. It does not need to discover or ne
 - [x] Built-in skills (PR review, issue triage seeds)
 
 ### v2 — Capability expansion
-- [ ] Additional channels (Web, Discord, Teams)
-- [ ] OAuth + full secret lifecycle (rotation, expiration, revocation)
-- [ ] Long-term vector memory
-- [ ] Subagent support (template-based, no nesting)
-- [ ] Richer admin UI with observability
-- [ ] MCP registry + dynamic tool discovery
+- [x] Additional channels (Web, Discord, Teams) — unified ingest; Slack Events API + Discord Interactions + Teams messaging webhook stubs
+- [x] OAuth + full secret lifecycle (rotation, expiration, revocation) — DB + `packages/policy-engine` + `/api/secrets*`; expiration via status + housekeeping; enforcement in `canUseTool` / tool router
+- [x] Long-term vector memory — `memory_embeddings` + `@vela/memory` (embed + retrieve + compaction); wired in agent loop when enabled
+- [x] Subagent support (template-based, no nesting) — **not reintroduced**; superseded by v3 dynamic spawning (see below)
+- [x] Richer admin UI with observability — run list filters, per-run event timeline, secrets & MCP admin pages
+- [x] MCP registry + dynamic tool discovery — `mcp_registry` / `mcp_discovered_tools`, sync API, execution via tool router with approvals
 
-### v3 — Scale & ecosystem
-- [ ] Multi-tenant SaaS mode
-- [ ] Skills marketplace (community contributions)
-- [ ] Advanced approval workflows
-- [ ] Dynamic subagent spawning
-- [ ] Capability marketplace
+### v3 — Ecosystem & governance (OSS)
+Shipping as **MIT-licensed infrastructure**: self-hosted operator tooling and community-contributed packs — not a SaaS product line.
+
+- [ ] Advanced approval workflows (quorum, expiry, auditable reject reason)
+- [ ] Dynamic subagent spawning (parent/child runs, depth limits) — early work exists in agent-runtime; not “done” as a productized contract yet
+- [ ] Capability marketplace (versioned OSS packs: manifest, install/enable per tenant/agent)
 
 ---
 
@@ -767,6 +767,8 @@ The agent receives a fully assembled context. It does not need to discover or ne
 ---
 
 ## Contributing
+
+**Product posture:** Vela is **open source under the MIT License** — meant to be forked, embedded, and operated by you. Roadmap items are capabilities for that OSS ecosystem, not a roadmap for a proprietary multi-tenant platform.
 
 See **[CONTRIBUTING.md](./CONTRIBUTING.md)** and **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**. Quick checks before a PR:
 

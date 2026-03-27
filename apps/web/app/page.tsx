@@ -53,6 +53,15 @@ export default async function HomePage() {
           <a className="link" href="/approvals">
             Approvals
           </a>
+          <a className="link" href="/capabilities">
+            Capabilities
+          </a>
+          <a className="link" href="/secrets">
+            Secrets
+          </a>
+          <a className="link" href="/mcp">
+            MCP
+          </a>
           <a className="link" href="/api/health/db">
             Health JSON
           </a>

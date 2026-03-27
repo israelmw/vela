@@ -1,8 +1,9 @@
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import {
   agents,
   messages,
+  runEvents,
   runs,
   sessions,
   threads,
@@ -144,6 +145,9 @@ export async function createRun(
     agentId: string;
     trigger: string;
     requiresApproval?: boolean;
+    parentRunId?: string | null;
+    subagentDepth?: number;
+    plan?: unknown;
   },
 ) {
   const [row] = await db
@@ -154,6 +158,9 @@ export async function createRun(
       trigger: input.trigger,
       status: "pending",
       requiresApproval: input.requiresApproval ?? false,
+      parentRunId: input.parentRunId ?? null,
+      subagentDepth: input.subagentDepth ?? 0,
+      plan: (input.plan ?? null) as object | null,
     })
     .returning();
 
@@ -219,8 +226,55 @@ export async function completeRun(
   });
 }
 
-export async function listRecentRuns(db: DB, limit = 10) {
+export async function listRecentRuns(
+  db: DB,
+  limit: number = 10,
+  status?: (typeof runs.$inferSelect)["status"],
+) {
+  if (status) {
+    return db
+      .select()
+      .from(runs)
+      .where(eq(runs.status, status))
+      .orderBy(desc(runs.startedAt))
+      .limit(limit);
+  }
   return db.select().from(runs).orderBy(desc(runs.startedAt)).limit(limit);
+}
+
+export async function appendRunEvent(
+  db: DB,
+  input: {
+    runId: string;
+    stepIndex?: number | null;
+    level: string;
+    eventType: string;
+    message: string;
+    meta?: unknown;
+    requestId?: string | null;
+  },
+) {
+  const [row] = await db
+    .insert(runEvents)
+    .values({
+      runId: input.runId,
+      stepIndex: input.stepIndex ?? null,
+      level: input.level,
+      eventType: input.eventType,
+      message: input.message,
+      meta: (input.meta ?? null) as object | null,
+      requestId: input.requestId ?? null,
+    })
+    .returning();
+  return row!;
+}
+
+export async function listRunEvents(db: DB, runId: string) {
+  return db
+    .select()
+    .from(runEvents)
+    .where(eq(runEvents.runId, runId))
+    .orderBy(asc(runEvents.createdAt));
 }
 
 export async function getRunById(db: DB, runId: string) {

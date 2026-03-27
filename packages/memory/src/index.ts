@@ -77,3 +77,11 @@ export function formatWorkingMemoryBlock(kv: Record<string, unknown>): string {
   if (Object.keys(kv).length === 0) return "";
   return `Working memory:\n${JSON.stringify(kv, null, 2)}`;
 }
+
+export {
+  LONG_TERM_ENABLED,
+  embedText,
+  formatLongTermBlock,
+  queryLongTermMemory,
+  storeLongTermMemory,
+} from "./long-term";

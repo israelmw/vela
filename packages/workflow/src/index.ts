@@ -13,3 +13,7 @@ export {
 } from "./builtin-executor";
 export { recordWorkflowPlan } from "./engine";
 export type { WorkflowStepSpec } from "./engine";
+export {
+  stripApprovalToolMeta,
+  expiresAtFromMinutes,
+} from "./approval-meta";

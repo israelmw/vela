@@ -6,6 +6,10 @@ import {
   getOrCreateActiveSession,
   getOrCreateThread,
 } from "@vela/control-plane";
+import {
+  ensureDemoCapabilityPack,
+  listInstalledSkillIdsForAgent,
+} from "@vela/capabilities";
 import { db, ensureDevCatalog } from "@vela/db";
 import {
   attachSkillsToRun,
@@ -20,6 +24,7 @@ export async function ingestUserMessage(input: {
   tenantId?: string;
   channel: ChannelType;
   channelRef: string;
+  requestId?: string;
 }): Promise<{
   threadId: string;
   sessionId: string;
@@ -34,6 +39,10 @@ export async function ingestUserMessage(input: {
 
   const agent = await ensureDefaultAgent(db, tenantId);
   await ensureDevCatalog(db, { agentId: agent.id, tenantId });
+  await ensureDemoCapabilityPack(db, {
+    tenantId,
+    agentId: agent.id,
+  });
 
   const thread = await getOrCreateThread(db, {
     tenantId,
@@ -61,7 +70,16 @@ export async function ingestUserMessage(input: {
     trigger: `${input.channel}.message`,
   });
 
-  const merged = resolveSkillIdsFromText(text, agent.defaultSkills);
+  const capSkillIds = await listInstalledSkillIdsForAgent(db, {
+    tenantId,
+    agentId: agent.id,
+  });
+  const merged = [
+    ...new Set([
+      ...resolveSkillIdsFromText(text, agent.defaultSkills),
+      ...capSkillIds,
+    ]),
+  ];
   const defaultIds = agent.defaultSkills.filter((id) => merged.includes(id));
   const dynamicIds = merged.filter((id) => !agent.defaultSkills.includes(id));
 
@@ -76,7 +94,11 @@ export async function ingestUserMessage(input: {
     source: "dynamic",
   });
 
-  await runAgentTurn(db, run.id);
+  await runAgentTurn(
+    db,
+    run.id,
+    input.requestId ? { requestId: input.requestId } : {},
+  );
 
   log.info("ingest.completed", {
     channel: input.channel,

@@ -15,6 +15,20 @@
       "when": 1774565599047,
       "tag": "0001_workflow_memory_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774574200579,
+      "tag": "0002_v3_approvals_subagent_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774576449707,
+      "tag": "0003_v2_capability_expansion",
+      "breakpoints": true
     }
   ]
 }

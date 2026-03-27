@@ -10,7 +10,19 @@ export type StepDriverResult =
   | { kind: "success"; output?: unknown }
   | { kind: "retry"; error: string }
   | { kind: "fail"; error: string }
-  | { kind: "approval"; toolId: string; args: unknown };
+  | {
+      kind: "approval";
+      toolId: string;
+      args: unknown;
+      approvalType?:
+        | "tool_call"
+        | "external_action"
+        | "secret_use"
+        | "subagent_spawn"
+        | "policy_override";
+      quorumRequired?: number;
+      expiresAt?: Date | null;
+    };
 
 /**
  * Runs the next due workflow step (pending, or retrying when nextRetryAt has passed).
@@ -148,9 +160,11 @@ export async function runNextPendingWorkflowStep(
     await db.insert(approvals).values({
       runId: params.runId,
       runStepId: next.id,
-      type: "tool_call",
+      type: result.approvalType ?? "tool_call",
       payload: { toolId: result.toolId, args: result.args },
       status: "pending",
+      quorumRequired: result.quorumRequired ?? 1,
+      expiresAt: result.expiresAt ?? null,
     });
 
     await db

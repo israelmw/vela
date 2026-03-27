@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { canUseTool } from "./index";
+import * as secrets from "./secrets";
 
 /** Minimal mock of Drizzle chains used by canUseTool. */
 function createSelectMock(
@@ -23,6 +24,10 @@ function createSelectMock(
 }
 
 describe("canUseTool", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("denies unknown tool", async () => {
     const db = createSelectMock([[]]) as import("@vela/db").DB;
     const r = await canUseTool(db, {
@@ -83,5 +88,23 @@ describe("canUseTool", () => {
     });
     expect(r.allowed).toBe(true);
     expect(r.requires_approval).toBe(false);
+  });
+
+  it("denies when tool requires active secret but none is bound", async () => {
+    vi.spyOn(secrets, "findActiveSecretBinding").mockResolvedValue(null);
+    const tool = {
+      id: "vela.needs_secret",
+      requiresApproval: false,
+      requiredSecretProvider: "github",
+    };
+    const db = createSelectMock([[tool]]) as import("@vela/db").DB;
+    const r = await canUseTool(db, {
+      agentId: "a",
+      tenantId: "t",
+      sessionId: "s",
+      toolId: "vela.needs_secret",
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("Missing active secret for provider: github");
   });
 });

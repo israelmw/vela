@@ -10,13 +10,18 @@ import {
 } from "@vela/db";
 import {
   appendMessage,
+  appendRunEvent,
   completeRun,
   updateRunStatus,
 } from "@vela/control-plane";
 import {
+  formatLongTermBlock,
   formatWorkingMemoryBlock,
   listWorkingMemory,
   loadShortTermTranscript,
+  LONG_TERM_ENABLED,
+  queryLongTermMemory,
+  storeLongTermMemory,
   upsertWorkingMemory,
 } from "@vela/memory";
 import {
@@ -26,6 +31,8 @@ import {
   type WorkflowStepSpec,
 } from "@vela/workflow";
 import { executeBuiltinTool } from "@vela/tool-router";
+import { MAX_SUBAGENT_DEPTH } from "@vela/types";
+import { runChildSubagentRun } from "./subagent";
 
 function attachUserText(transcript: string): string {
   const lastUserLine = transcript
@@ -35,11 +42,47 @@ function attachUserText(transcript: string): string {
   return lastUserLine?.replace(/^user:\s*/, "").trim() ?? "";
 }
 
+function parseRiskyPayload(raw: string): {
+  note: string;
+  quorumRequired?: number;
+  expiresInMinutes?: number;
+} {
+  const t = raw.trim();
+  if (!t.startsWith("{")) {
+    return { note: t };
+  }
+  try {
+    const j = JSON.parse(t) as Record<string, unknown>;
+    const note = String(j.note ?? "");
+    const out: { note: string; quorumRequired?: number; expiresInMinutes?: number } =
+      { note };
+    if (
+      typeof j.quorumRequired === "number" &&
+      j.quorumRequired >= 1
+    ) {
+      out.quorumRequired = Math.floor(j.quorumRequired);
+    }
+    if (
+      typeof j.expiresInMinutes === "number" &&
+      j.expiresInMinutes > 0
+    ) {
+      out.expiresInMinutes = Math.floor(j.expiresInMinutes);
+    }
+    return out;
+  } catch {
+    return { note: t };
+  }
+}
+
 /**
  * Single-turn agent: reasoning step + optional vela.echo if user text mentions "echo:".
  * `workflow:[...]` runs a persisted multi-step plan (durable retries + approvals).
  */
-export async function runAgentTurn(db: DB, runId: string): Promise<void> {
+export async function runAgentTurn(
+  db: DB,
+  runId: string,
+  opts?: { requestId?: string },
+): Promise<void> {
   const [run] = await db
     .select()
     .from(runs)
@@ -66,15 +109,55 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
 
   await updateRunStatus(db, run.id, { status: "running" });
 
+  await appendRunEvent(db, {
+    runId: run.id,
+    level: "info",
+    eventType: "run.turn.start",
+    message: "agent turn started",
+    requestId: opts?.requestId ?? null,
+    meta: { trigger: run.trigger },
+  });
+
   let stepIndex = run.currentStep;
   const transcript = await loadShortTermTranscript(db, run.sessionId);
   const wm = await listWorkingMemory(db, run.sessionId);
   const wmBlock = formatWorkingMemoryBlock(wm);
-  const contextForModel = wmBlock
-    ? `${wmBlock}\n\nConversation:\n${transcript}`
-    : `Conversation:\n${transcript}`;
 
-  const userText = attachUserText(transcript);
+  const baseUserTextEarly = attachUserText(transcript);
+  const planGoalEarly =
+    run.trigger === "subagent" &&
+    run.plan &&
+    typeof run.plan === "object" &&
+    run.plan !== null &&
+    "subagentGoal" in run.plan
+      ? String(
+          (run.plan as { subagentGoal?: unknown }).subagentGoal ?? "",
+        ).trim()
+      : "";
+  const userTextEarly =
+    planGoalEarly.length > 0 ? planGoalEarly : baseUserTextEarly;
+
+  let ltBlock = "";
+  if (LONG_TERM_ENABLED && userTextEarly.length > 3) {
+    try {
+      const hits = await queryLongTermMemory(db, {
+        sessionId: run.sessionId,
+        queryText: userTextEarly.slice(0, 2000),
+      });
+      ltBlock = formatLongTermBlock(hits);
+    } catch {
+      ltBlock = "";
+    }
+  }
+
+  const contextForModelParts = [
+    ltBlock,
+    wmBlock,
+    `Conversation:\n${transcript}`,
+  ].filter(Boolean);
+  const contextForModel = contextForModelParts.join("\n\n");
+
+  const userText = userTextEarly;
 
   try {
     if (userText.toLowerCase().startsWith("workflow:")) {
@@ -96,6 +179,18 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
         tenantId: session.tenantId,
         sessionId: run.sessionId,
         runId: run.id,
+        spawnSubagent: ({ goal }) =>
+          runChildSubagentRun(
+            db,
+            {
+              id: run.id,
+              sessionId: run.sessionId,
+              agentId: run.agentId,
+              subagentDepth: run.subagentDepth,
+            },
+            goal,
+            (d, id) => runAgentTurn(d, id, opts),
+          ),
       });
       const drain = await drainWorkflowSteps(db, {
         runId: run.id,
@@ -140,7 +235,12 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
       .returning();
 
     if (userText.toLowerCase().startsWith("risky:")) {
-      const args = { note: userText.slice(5).trim() };
+      const parsed = parseRiskyPayload(userText.slice("risky:".length));
+      const args = { note: parsed.note };
+      const expiresAt =
+        parsed.expiresInMinutes !== undefined
+          ? new Date(Date.now() + parsed.expiresInMinutes * 60_000)
+          : null;
       await db
         .update(runSteps)
         .set({ status: "completed", endedAt: new Date() })
@@ -164,6 +264,8 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
         type: "tool_call",
         payload: { toolId: "vela.risky_change", args },
         status: "pending",
+        quorumRequired: parsed.quorumRequired ?? 1,
+        expiresAt,
       });
 
       await db
@@ -175,6 +277,62 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
         })
         .where(eq(runs.id, run.id));
 
+      return;
+    }
+
+    if (userText.toLowerCase().startsWith("subagent:")) {
+      const goal = userText.slice("subagent:".length).trim();
+      if (!goal) {
+        await db
+          .update(runSteps)
+          .set({ status: "failed", endedAt: new Date() })
+          .where(eq(runSteps.id, reasonStep!.id));
+        await completeRun(db, run.id, null, "subagent: goal required");
+        return;
+      }
+      if (run.subagentDepth >= MAX_SUBAGENT_DEPTH) {
+        await db
+          .update(runSteps)
+          .set({ status: "failed", endedAt: new Date() })
+          .where(eq(runSteps.id, reasonStep!.id));
+        await completeRun(db, run.id, null, "subagent max depth exceeded");
+        return;
+      }
+
+      await db
+        .update(runSteps)
+        .set({ status: "completed", endedAt: new Date() })
+        .where(eq(runSteps.id, reasonStep!.id));
+
+      try {
+        const out = await runChildSubagentRun(
+          db,
+          {
+            id: run.id,
+            sessionId: run.sessionId,
+            agentId: run.agentId,
+            subagentDepth: run.subagentDepth,
+          },
+          goal,
+          (d, id) => runAgentTurn(d, id, opts),
+        );
+        await appendMessage(db, {
+          sessionId: run.sessionId,
+          threadId: session.threadId,
+          role: "assistant",
+          content: { text: out.summary },
+        });
+
+        await db
+          .update(runs)
+          .set({ currentStep: stepIndex })
+          .where(eq(runs.id, run.id));
+
+        await completeRun(db, run.id, out.summary.slice(0, 500), null);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await completeRun(db, run.id, null, msg);
+      }
       return;
     }
 
@@ -251,9 +409,37 @@ export async function runAgentTurn(db: DB, runId: string): Promise<void> {
       });
     }
 
+    if (LONG_TERM_ENABLED && text.trim()) {
+      try {
+        await storeLongTermMemory(db, {
+          sessionId: run.sessionId,
+          runId: run.id,
+          content: `assistant: ${text.slice(0, 4000)}`,
+          meta: { runId: run.id, source: "loop" },
+        });
+      } catch {
+        /* optional memory */
+      }
+    }
+
+    await appendRunEvent(db, {
+      runId: run.id,
+      level: "info",
+      eventType: "run.turn.completed",
+      message: "agent turn completed",
+      requestId: opts?.requestId ?? null,
+    });
+
     await completeRun(db, run.id, text.slice(0, 500), null);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await appendRunEvent(db, {
+      runId: run.id,
+      level: "error",
+      eventType: "run.turn.error",
+      message: msg,
+      requestId: opts?.requestId ?? null,
+    }).catch(() => {});
     const [runningStep] = await db
       .select()
       .from(runSteps)

@@ -10,10 +10,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vela/capabilities": "workspace:*",
     "@vela/agent-runtime": "workspace:*",
     "@vela/channels": "workspace:*",
     "@vela/control-plane": "workspace:*",
     "@vela/db": "workspace:*",
+    "@vela/policy-engine": "workspace:*",
+    "@vela/tool-router": "workspace:*",
     "@vela/skill-resolver": "workspace:*",
     "@vela/types": "workspace:*",
     "@vela/workflow": "workspace:*",

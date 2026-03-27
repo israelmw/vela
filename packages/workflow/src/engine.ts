@@ -4,7 +4,12 @@ import { runSteps, runs } from "@vela/db";
 
 export type WorkflowStepSpec = {
   /** Drizzle run_step type */
-  kind: "reasoning" | "tool_call" | "approval_gate" | "artifact";
+  kind:
+    | "reasoning"
+    | "tool_call"
+    | "approval_gate"
+    | "artifact"
+    | "subagent";
   label: string;
   toolName?: string | null;
   toolInput?: unknown;

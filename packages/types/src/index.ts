@@ -23,6 +23,7 @@ export type RunStepType =
 export type RunStepStatus =
   | "pending"
   | "running"
+  | "retrying"
   | "completed"
   | "failed"
   | "skipped";
@@ -34,7 +35,39 @@ export type ApprovalType =
   | "tool_call"
   | "external_action"
   | "secret_use"
-  | "subagent_spawn";
+  | "subagent_spawn"
+  | "policy_override";
+
+/** Auditable vote stored on `approvals.votes` (JSON). */
+export type ApprovalVote = {
+  actor: string;
+  action: "approve" | "reject";
+  at: string;
+  /** Present for `reject` when a written reason is required. */
+  reason?: string;
+};
+
+/** Embedded skill definition shipped inside an OSS capability pack. */
+export type CapabilityManifestSkill = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  instructions: string;
+  requiredTools?: string[];
+  requiredMcp?: string[];
+  files?: string[];
+};
+
+/** OSS capability pack manifest (subset; extend as needed). */
+export type CapabilityManifest = {
+  skills?: CapabilityManifestSkill[];
+  tools?: string[];
+  description?: string;
+};
+
+/** Maximum nested subagent depth (parent run → child runs). */
+export const MAX_SUBAGENT_DEPTH = 3;
 
 // Artifacts
 export type ArtifactType = "file" | "patch" | "report" | "data" | "log";
@@ -50,6 +83,11 @@ export type ChannelType = "slack" | "web" | "discord" | "teams";
 
 // Secrets
 export type AuthType = "none" | "oauth" | "api_key" | "secret";
+
+export type SecretBindingStatus = "active" | "expired" | "revoked";
+
+/** Run / ops observability (persisted JSON logs). */
+export type RunEventLevel = "info" | "warn" | "error" | "debug";
 
 // Policy
 export interface PolicyResult {
