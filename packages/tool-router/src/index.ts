@@ -3,6 +3,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import { toolBindings, toolsRegistry } from "@vela/db";
 import { canUseTool, findActiveSecretBinding } from "@vela/policy-engine";
+import { executeSandboxStepForRun } from "@vela/sandbox";
 import { dispatchBuiltin } from "./builtin-dispatch";
 import { callMcpTool } from "./mcp";
 import type { ToolCallResult } from "./types";
@@ -10,7 +11,12 @@ export type { ToolCallResult } from "./types";
 export { dispatchBuiltin } from "./builtin-dispatch";
 export { toolsRegistry } from "@vela/db";
 export { canUseTool } from "@vela/policy-engine";
-export { discoverMcpTools, mcpToolRegistryId, syncMcpToolsToRegistry } from "./mcp";
+export {
+  discoverMcpTools,
+  maybeRefreshMcpCatalog,
+  mcpToolRegistryId,
+  syncMcpToolsToRegistry,
+} from "./mcp";
 
 /**
  * Dispatch tool execution after policy checks (builtin vs MCP).
@@ -21,6 +27,7 @@ export async function executeToolDispatch(
     agentId: string;
     tenantId: string;
     sessionId: string;
+    runId?: string;
     toolId: string;
     args: unknown;
   },
@@ -39,6 +46,26 @@ export async function executeToolDispatch(
       error: "Tool not registered",
       code: "unknown_tool",
     };
+  }
+
+  if (tool.executorType === "builtin" && tool.id === "vela.sandbox") {
+    const runId = params.runId;
+    if (!runId) {
+      return {
+        ok: false,
+        error:
+          "vela.sandbox requires runId (native loop or workflow context only)",
+        code: "denied",
+      };
+    }
+    const a = params.args as { kind?: unknown; payload?: unknown };
+    const kind = a.kind === "add" ? "add" : "echo";
+    const { output } = await executeSandboxStepForRun(db, {
+      runId,
+      runStepId: null,
+      op: { kind, payload: a.payload ?? {} },
+    });
+    return { ok: true, output };
   }
 
   if (tool.requiredSecretProvider) {
@@ -77,6 +104,7 @@ export async function executeBuiltinTool(
     agentId: string;
     tenantId: string;
     sessionId: string;
+    runId?: string;
     toolId: string;
     args: unknown;
   },
@@ -104,7 +132,14 @@ export async function executeBuiltinTool(
     };
   }
 
-  return executeToolDispatch(db, params);
+  return executeToolDispatch(db, {
+    agentId: params.agentId,
+    tenantId: params.tenantId,
+    sessionId: params.sessionId,
+    ...(params.runId !== undefined ? { runId: params.runId } : {}),
+    toolId: params.toolId,
+    args: params.args,
+  });
 }
 
 /** After human approval — binding must still exist. */
@@ -116,6 +151,7 @@ export async function executeApprovedBuiltinTool(
     toolId: string;
     args: unknown;
     sessionId?: string;
+    runId?: string;
   },
 ): Promise<ToolCallResult> {
   const [binding] = await db
@@ -143,6 +179,7 @@ export async function executeApprovedBuiltinTool(
     agentId: params.agentId,
     tenantId: params.tenantId,
     sessionId: params.sessionId ?? "approval-resume",
+    ...(params.runId !== undefined ? { runId: params.runId } : {}),
     toolId: params.toolId,
     args: params.args,
   });

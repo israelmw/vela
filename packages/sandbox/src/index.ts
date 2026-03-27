@@ -7,3 +7,4 @@ export {
   snapshotSandboxState,
 } from "./lifecycle";
 export type { SandboxHandle } from "./lifecycle";
+export { executeSandboxStepForRun } from "./run-for-run";

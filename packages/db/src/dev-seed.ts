@@ -11,6 +11,15 @@ const emptyInputSchema = {
   properties: {},
 } as const;
 
+const sandboxInputSchema = {
+  type: "object",
+  properties: {
+    kind: { type: "string", enum: ["echo", "add"] },
+    payload: { type: "object" },
+  },
+  required: ["kind"],
+} as const;
+
 /**
  * Idempotent dev/prod bootstrap: registry rows + bindings for the default agent.
  * Safe to call on every web request in early versions (cheap conflict no-ops).
@@ -62,6 +71,17 @@ export async function ensureDevCatalog(
         requiresApproval: true,
         scope: "internal:risk",
       },
+      {
+        id: "vela.sandbox",
+        name: "Sandbox (ephemeral ops)",
+        description:
+          "Run allowlisted sandbox ops for this run: kind echo (returns payload) or add (numeric a+b). Snapshots to Blob when configured.",
+        inputSchema: sandboxInputSchema,
+        executorType: "builtin",
+        executorRef: "vela.sandbox",
+        requiresApproval: false,
+        scope: "sandbox:execute",
+      },
     ])
     .onConflictDoNothing();
 
@@ -98,6 +118,7 @@ export async function ensureDevCatalog(
     "vela.web_search_stub",
     "vela.channel_reply_stub",
     "vela.risky_change",
+    "vela.sandbox",
   ] as const;
 
   for (const toolId of toolIds) {

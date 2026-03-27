@@ -11,6 +11,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@vela/sandbox": "workspace:*",
     "@vela/db": "workspace:*",
     "@vela/policy-engine": "workspace:*",
     "@vela/types": "workspace:*",

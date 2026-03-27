@@ -121,6 +121,7 @@ export async function resumeApprovedToolCall(
     agentId: run.agentId,
     tenantId: session.tenantId,
     sessionId: session.id,
+    runId: run.id,
     toolId: payload.toolId,
     args: payload.args ?? {},
   });

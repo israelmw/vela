@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, stepCountIs } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import type { DB } from "@vela/db";
 import {
@@ -32,6 +32,7 @@ import {
 } from "@vela/workflow";
 import { executeBuiltinTool } from "@vela/tool-router";
 import { MAX_SUBAGENT_DEPTH } from "@vela/types";
+import { buildAgentToolset } from "./loop-tools";
 import { runChildSubagentRun } from "./subagent";
 
 function attachUserText(transcript: string): string {
@@ -342,6 +343,7 @@ export async function runAgentTurn(
         agentId: run.agentId,
         tenantId: session.tenantId,
         sessionId: run.sessionId,
+        runId: run.id,
         toolId: "vela.echo",
         args: { text: payload },
       });
@@ -374,11 +376,39 @@ export async function runAgentTurn(
       return;
     }
 
-    const { text } = await generateText({
-      model: agent.model,
-      system: agent.systemPrompt,
-      prompt: `${contextForModel}\n\nassistant:`,
+    const maxToolSteps = Number(
+      process.env.VELA_AGENT_MAX_TOOL_STEPS ?? "20",
+    );
+    const tools = await buildAgentToolset(db, {
+      agentId: run.agentId,
+      tenantId: session.tenantId,
+      sessionId: session.id,
+      runId: run.id,
     });
+    const toolHint =
+      Object.keys(tools).length > 0
+        ? "\n\nYou may call bound tools by name when helpful. Use vela_sandbox with {\"kind\":\"echo\"|\"add\",\"payload\":{...}} for allowlisted sandbox ops on this run (same lifecycle as workflow artifact steps: ephemeral sandbox, optional Blob artifact)."
+        : "";
+
+    const baseGen = {
+      model: agent.model,
+      system: `${agent.systemPrompt}${toolHint}`,
+      prompt: `${contextForModel}\n\nassistant:`,
+    };
+    const gen =
+      Object.keys(tools).length > 0
+        ? await generateText({
+            ...baseGen,
+            tools,
+            stopWhen: stepCountIs(maxToolSteps),
+          })
+        : await generateText(baseGen);
+
+    let text = gen.text.trim();
+    if (!text && Object.keys(tools).length > 0) {
+      text =
+        "(Turn finished after tool calls; no additional assistant prose — inspect tool results or artifacts.)";
+    }
 
     await db
       .update(runSteps)

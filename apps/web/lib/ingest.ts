@@ -13,11 +13,14 @@ import {
 import { db, ensureDevCatalog } from "@vela/db";
 import {
   attachSkillsToRun,
-  resolveSkillIdsFromText,
+  resolveSkillIdsForText,
+  syncSkillsFromFilesystem,
 } from "@vela/skill-resolver";
+import path from "node:path";
 import type { ChannelType } from "@vela/types";
 import { DEFAULT_TENANT_ID } from "@vela/types";
 import { log } from "./logger";
+import { maybeAutoSyncMcpTools } from "./mcp-autosync";
 
 export async function ingestUserMessage(input: {
   text: string;
@@ -43,6 +46,8 @@ export async function ingestUserMessage(input: {
     tenantId,
     agentId: agent.id,
   });
+  await syncSkillsFromFilesystem(db, path.join(process.cwd(), "../.."));
+  await maybeAutoSyncMcpTools(tenantId);
 
   const thread = await getOrCreateThread(db, {
     tenantId,
@@ -74,12 +79,11 @@ export async function ingestUserMessage(input: {
     tenantId,
     agentId: agent.id,
   });
-  const merged = [
-    ...new Set([
-      ...resolveSkillIdsFromText(text, agent.defaultSkills),
-      ...capSkillIds,
-    ]),
-  ];
+  const merged = await resolveSkillIdsForText(db, {
+    text,
+    defaultSkillIds: agent.defaultSkills,
+    extraSkillIds: capSkillIds,
+  });
   const defaultIds = agent.defaultSkills.filter((id) => merged.includes(id));
   const dynamicIds = merged.filter((id) => !agent.defaultSkills.includes(id));
 

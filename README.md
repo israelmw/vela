@@ -12,7 +12,7 @@ Inspired by the architecture of OpenClaw/OpenCode, rebuilt from scratch for serv
 
 ### Current status
 
-**v2 capability expansion (current slice):** Web + Slack + Discord (interactions) + Teams (activity) ingest into the same pipeline; secret bindings support **active / expired / revoked** with rotate/revoke APIs and policy enforcement when `tools_registry.required_secret_provider` is set; **long-term memory** (opt-in via `VELA_LONG_TERM_MEMORY`) with embedding + cosine retrieval; **MCP registry** with sync/discovery and policy-gated execution; **run_events** for step-level observability in the admin UI (`/runs`, `/runs/[id]`, `/secrets`, `/mcp`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
+**v2 capability expansion (current slice):** Web + Slack + Discord + Teams ingest through the shared control plane; chat platforms use the **[Vercel Chat SDK](https://chat-sdk.dev/)** (`chat`, `@chat-adapter/*`) into **`apps/web/lib/ingest.ts`**; secret bindings support **active / expired / revoked** with rotate/revoke APIs and policy enforcement when `tools_registry.required_secret_provider` is set; **long-term memory** (opt-in via `VELA_LONG_TERM_MEMORY`) with embedding + cosine retrieval; **MCP registry** with sync/discovery and policy-gated execution; **run_events** for step-level observability in the admin UI (`/runs`, `/runs/[id]`, `/secrets`, `/mcp`). Production still expects **Vercel + Neon + Blob** (and AI Gateway / OIDC when using the LLM path). See [Cloud quickstart](#cloud-quickstart) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
@@ -54,8 +54,8 @@ They focus on the loop — the LLM calling tools, the tools returning results. T
 
 ```
 User
- └── Channels (Chat SDK)         Slack / Web / Discord / Teams
-      └── Interaction Layer       onMessage / onMention / onInteraction
+ └── Channels                  Slack / Web / Discord / Teams
+      └── Interaction Layer       Chat SDK + Next.js webhooks → ingest
            └── Control Plane      Agents / Sessions / Threads / Policies / Approvals
                 ├── Admin UI / Observability
                 ├── Agent Runtime (AI SDK Tool Loop)
@@ -64,9 +64,8 @@ User
                 │    └── Tool Router              Core Tools / MCP / Channel Tools
                 │         ├── Workflow Layer       durable long-running executions
                 │         │    └── Sandbox Layer   isolated execution environment
-                │         └── Capability Layer     Secrets / OAuth / Policies / Approvals
-                │              └── MCP Servers     GitHub / Vercel / Docs / Linear / DB
-                └── Artifacts & State             Postgres / Blob / Vector Store
+                │         └── Capability Layer     Secret bindings / policies / approvals / MCP registry
+                └── Artifacts & State             Postgres (incl. memory_embeddings) / Blob
 ```
 
 The key architectural insight:
@@ -78,12 +77,12 @@ The key architectural insight:
 ## Layers
 
 ### Interaction Layer
-Normalizes events from any channel into a unified format. Uses [Chat SDK](https://chat-sdk.dev) adapters. Does not contain business logic.
+Multi-channel inbound events go through the **[Chat SDK](https://chat-sdk.dev/)** in **`apps/web/lib/chat-bot.ts`**: a single **`Chat`** instance registers **`@chat-adapter/slack`**, **`@chat-adapter/discord`**, and **`@chat-adapter/teams`** (each enabled only when the matching env vars are set). Webhooks are thin **`POST`** handlers that call **`dispatchChatWebhook`** with [`next/server` `after`](https://nextjs.org/docs/app/api-reference/functions/after) for background work. Handlers (**`onNewMention`**, **`onNewMessage`**, **`onSubscribedMessage`**) call **`ingestUserMessage`** with normalized text and a stable **`thread.id`** as **`channelRef`**. **`POST /api/events/web`** stays a first-class path for non-Chat browser/demo traffic. Subscriptions and locks use **`@chat-adapter/state-redis`** when **`REDIS_URL`** is set, otherwise **`@chat-adapter/state-memory`** (dev / single-instance only). Low-level helpers for tests or custom tooling remain in **`packages/channels`**.
 
 **Responsibilities:**
-- Receive raw channel events
-- Normalize to internal event format
-- Emit to Control Plane
+- Receive platform webhooks (`/api/channels/slack/events`, `/api/channels/discord/interactions`, `/api/channels/teams/messages`) or web UI events (`/api/events/web`)
+- Route through Chat SDK adapters + state
+- Forward user text into **`ingestUserMessage`** (threads, sessions, runs)
 
 **Does not:**
 - Make agent decisions
@@ -138,49 +137,48 @@ Routes tool calls to the correct executor: a core built-in tool, an MCP server, 
 ---
 
 ### Workflow Layer
-Handles long-running, durable executions. Powered by Vercel/Inngest-style durable workflow primitives. Decoupled from the agent loop.
+Linear durable execution in **`packages/workflow`**: user messages that start with `workflow:` carry a JSON step list; steps run with retries, `retrying` / `next_retry_at`, optional approval gates (including quorum and expiry metadata from step args), and integration with **`packages/sandbox`**. Decoupled from the default LLM tool loop except where the runtime triggers workflow continuation.
 
 See [Sandbox Lifecycle](#sandbox-lifecycle).
 
 ---
 
 ### Capability Layer
-Manages secrets, OAuth tokens, scopes, and approvals. The agent never sees raw credentials — it receives a delegated capability.
+Manages **secret bindings** (opaque refs + lifecycle), **approvals**, and policy checks applied before tool execution. This repo does not ship a full identity/OAuth server—wire tokens via your store and **`secret_ref`**.
 
 ---
 
 ### Artifacts & State
-Postgres for structured state and metadata. Blob for artifacts and snapshots. Vector store for long-term memory retrieval.
+Postgres for structured state, **including `memory_embeddings`** (JSON float vectors + application-side cosine retrieval when long-term memory is enabled). Blob for artifacts and sandbox snapshots.
 
 ---
 
 ## Control Plane — entities & schema
 
-The Control Plane is only as strong as its data model. These are the core entities.
+Authoritative definitions live in **`packages/db/src/schema.ts`** and SQL migrations under **`packages/db/migrations`**. Below is what is actually deployed today.
 
 ### `agents`
 ```ts
 {
   id: uuid
   name: string
-  description: string
-  model: string                   // e.g. AI Gateway: "anthropic/claude-sonnet-4.6", "openai/gpt-5.4"
+  description: string | null
+  model: string
   system_prompt: string
-  default_skills: string[]        // skill IDs preloaded on every session
-  allowed_channels: string[]
+  default_skills: string[]
+  allowed_channels: string[]      // maps to channel_type enum where used
   tenant_id: uuid
-  created_at: timestamp
-  updated_at: timestamp
+  status: "active" | "inactive" | "archived"
+  created_at, updated_at: timestamp
 }
 ```
 
 ### `threads`
-A thread is a channel-level conversation object (Slack thread, web session, etc.).
 ```ts
 {
   id: uuid
-  channel: string                 // "slack" | "web" | "discord" | "teams"
-  channel_ref: string             // Slack thread_ts, Discord message ID, etc.
+  channel: "slack" | "web" | "discord" | "teams"
+  channel_ref: string
   agent_id: uuid
   tenant_id: uuid
   created_at: timestamp
@@ -188,7 +186,6 @@ A thread is a channel-level conversation object (Slack thread, web session, etc.
 ```
 
 ### `sessions`
-A session is the agent's live context within a thread. One thread may have multiple sessions over time.
 ```ts
 {
   id: uuid
@@ -199,8 +196,7 @@ A session is the agent's live context within a thread. One thread may have multi
   memory_snapshot_id: uuid | null
   active_skills: string[]
   context_summary: string | null
-  started_at: timestamp
-  ended_at: timestamp | null
+  started_at, ended_at: timestamp | null
 }
 ```
 
@@ -210,30 +206,30 @@ A session is the agent's live context within a thread. One thread may have multi
   id: uuid
   session_id: uuid
   thread_id: uuid
-  role: "user" | "assistant" | "tool" | "system"
-  content: string | object
+  role: string                     // e.g. user / assistant / tool / system (stored as text)
+  content: jsonb                   // normalized message body
   tool_call_id: string | null
   created_at: timestamp
 }
 ```
 
 ### `runs`
-A run is a discrete unit of durable work initiated by the agent.
 ```ts
 {
   id: uuid
   session_id: uuid
   agent_id: uuid
-  trigger: string                 // what caused this run
+  parent_run_id: uuid | null       // child run when spawned as subagent
+  subagent_depth: number           // default 0; incremented for child runs
+  trigger: string
   status: "pending" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled"
-  plan: object | null             // structured plan before execution
+  plan: jsonb | null
   current_step: number
   requires_approval: boolean
   result_summary: string | null
   artifacts_count: number
   error: string | null
-  started_at: timestamp
-  ended_at: timestamp | null
+  started_at, ended_at: timestamp | null
 }
 ```
 
@@ -244,93 +240,112 @@ A run is a discrete unit of durable work initiated by the agent.
   run_id: uuid
   step_index: number
   type: "tool_call" | "reasoning" | "approval_gate" | "subagent" | "artifact"
-  status: "pending" | "running" | "completed" | "failed" | "skipped"
-  tool_name: string | null
-  tool_input: object | null
-  tool_result: object | null
-  started_at: timestamp
-  ended_at: timestamp | null
+  status: "pending" | "running" | "retrying" | "completed" | "failed" | "skipped"
+  tool_name, tool_input, tool_result: optional json / text
+  attempt: number                  // retry counter
+  max_attempts: number
+  last_error: string | null
+  next_retry_at: timestamp | null
+  idempotency_key: string | null   // unique per run when set
+  started_at, ended_at: timestamp | null
 }
+```
+
+### `working_memory`
+Session-scoped key/value overlay (working set for prompts).
+```ts
+{
+  session_id: uuid
+  key: string
+  value: jsonb
+  updated_at: timestamp
+}  // primary key (session_id, key)
 ```
 
 ### `skills_registry`
 ```ts
 {
-  id: string                      // e.g. "github-pr-review"
+  id: string
   name: string
   description: string
   version: string
-  instructions: string            // injected into system prompt when loaded
-  files: string[]                 // blob paths for templates, scripts, etc.
-  required_tools: string[]        // tool IDs this skill depends on
-  required_mcp: string[]          // MCP server IDs needed
+  instructions: string
+  files: string[]
+  required_tools: string[]
+  required_mcp: string[]
   created_at: timestamp
 }
 ```
 
 ### `run_skills`
-Skills attached to a specific run (union of session defaults + dynamic loads).
 ```ts
 {
   id: uuid
   run_id: uuid
   skill_id: string
+  source: "default" | "dynamic"
   loaded_at: timestamp
-  source: "default" | "dynamic"   // how it was attached
 }
 ```
 
 ### `tools_registry`
 ```ts
 {
-  id: string                      // e.g. "github.create_pr"
+  id: string
   name: string
   description: string
-  input_schema: object            // JSON Schema
+  input_schema: jsonb
   executor_type: "builtin" | "mcp" | "channel"
-  executor_ref: string            // MCP server ID or builtin handler name
+  executor_ref: string            // builtin id, or "mcpId::toolName" for MCP-discovered tools
   requires_approval: boolean
-  scope: string                   // e.g. "github:write"
+  scope: string
+  required_secret_provider: string | null  // provider key; active binding required for tool use
 }
 ```
 
 ### `tool_bindings`
-Which tools are enabled for which agent/tenant combination.
-```ts
-{
-  id: uuid
-  agent_id: uuid
-  tenant_id: uuid
-  tool_id: string
-  enabled: boolean
-  policy_overrides: object | null
-}
-```
+Per agent/tenant enablement for a tool id (`enabled`, optional `policy_overrides` jsonb).
 
 ### `mcp_registry`
 ```ts
 {
-  id: string                      // e.g. "github-mcp"
+  id: string
   name: string
   url: string
-  auth_type: "none" | "oauth" | "api_key" | "secret"
+  auth_type: string               // e.g. none | oauth | api_key | secret
   secret_ref: string | null
+  capability_tags: string[]
+  required_scopes: string[]
+  last_health_check: timestamp | null
+  last_health_ok: boolean | null
+  meta: jsonb | null
 }
 ```
+
+### `mcp_discovered_tools`
+Catalog row per MCP tool after sync (`mcp_id`, `tool_name`, `description`, `input_schema`, `discovered_at`).
 
 ### `secret_bindings`
 ```ts
 {
   id: uuid
   tenant_id: uuid
-  agent_id: uuid | null           // null = tenant-level
-  provider: string                // "github" | "linear" | "notion" | etc.
-  scope: string                   // "read" | "write" | "admin"
-  secret_ref: string              // pointer into secret store (never the value)
-  expires_at: timestamp | null
-  created_at: timestamp
+  agent_id: uuid | null           // null = tenant-wide
+  provider: string
+  scope: string
+  secret_ref: string
+  status: "active" | "expired" | "revoked"
+  rotated_at, revoked_at: timestamp | null
+  revoked_reason: string | null
+  expires_at, created_at: timestamp | null
 }
 ```
+
+### `memory_embeddings`
+Long-term chunks: `session_id`, optional `run_id`, `content`, `embedding` (jsonb float array), `meta`, optional `expires_at`, `created_at`.
+
+### `run_events`
+Operational timeline for admin UI / drains: `run_id`, optional `step_index`, `level`, `event_type`, `message`, `meta`, optional `request_id`, `created_at`.
 
 ### `approvals`
 ```ts
@@ -338,12 +353,15 @@ Which tools are enabled for which agent/tenant combination.
   id: uuid
   run_id: uuid
   run_step_id: uuid
-  type: "tool_call" | "external_action" | "secret_use" | "subagent_spawn"
-  payload: object                 // what is being approved
+  type: "tool_call" | "external_action" | "secret_use" | "subagent_spawn" | "policy_override"
+  payload: jsonb
   status: "pending" | "approved" | "rejected" | "expired"
-  requested_at: timestamp
-  resolved_at: timestamp | null
-  resolved_by: string | null      // user ID or "auto"
+  expires_at: timestamp | null
+  rejection_reason: string | null         // set on reject (required by API path)
+  quorum_required: number                 // default 1; approve count must reach this
+  votes: jsonb                            // array of { actor, action, at, reason? }
+  requested_at, resolved_at: timestamp | null
+  resolved_by: string | null
 }
 ```
 
@@ -352,6 +370,7 @@ Which tools are enabled for which agent/tenant combination.
 {
   id: uuid
   run_id: uuid
+  run_step_id: uuid | null
   name: string
   type: "file" | "patch" | "report" | "data" | "log"
   blob_path: string
@@ -360,6 +379,12 @@ Which tools are enabled for which agent/tenant combination.
   created_at: timestamp
 }
 ```
+
+### `sandboxes`
+`run_id`, `status` (`created` → `ready` → `running` | `suspended` | `completed` | `failed` → `destroyed`), optional `snapshot_blob_path`, timestamps.
+
+### `capability_packages` / `capability_installs`
+Versioned OSS packs: `capability_packages` stores `ref`, `name`, `version`, `manifest` jsonb; `capability_installs` binds a `package_ref` to `tenant_id` and optional `agent_id` with `enabled` and optional `config`.
 
 ---
 
@@ -393,36 +418,26 @@ A **tool** is an executable capability with a stable interface.
 
 Tools are registered in `tools_registry` with a JSON Schema input contract. They are invoked by the agent loop via the Tool Router. The Tool Router validates that the tool is bound and policy-cleared before executing.
 
-Tool types:
-- `builtin` — logic lives in the codebase
-- `mcp` — delegated to an MCP server
-- `channel` — channel-specific actions (e.g. "reply to thread", "create ticket")
+Tool types in schema:
+- `builtin` — handlers in **`packages/tool-router`** (e.g. seeds like `vela.channel_reply_stub` are still registered as builtins today)
+- `mcp` — JSON-RPC to a server after tools are synced into **`tools_registry`**
+- `channel` — reserved enum value for future channel-native executors; not required for current seeds
 
 **When to use a tool:** you need a discrete, typed, auditable action that the agent can call by name.
 
 ---
 
 ### MCP Server
-An MCP server is an **external source of tools and/or resources**.
+An MCP server is an **external source of tools** surfaced as rows in `mcp_registry`. **`POST /api/mcp`** (sync) performs a JSON-RPC `tools/list` against the server URL, upserts rows in `mcp_discovered_tools`, and the tool router can materialize `tools_registry` entries with `executor_type: "mcp"` and `executor_ref` of the form `mcpId::toolName`. Execution uses JSON-RPC `tools/call` in **`packages/tool-router`**. Policy (`canUseTool`) and optional `required_secret_provider` apply the same as built-ins.
 
-MCP servers expose their own tool catalog. The Tool Router registers those tools dynamically at startup and routes calls to the server. The agent never talks to an MCP server directly — it calls tools, and the Tool Router resolves the executor.
-
-MCP server connections are stored in `mcp_registry` and scoped to tenants via `secret_bindings`.
-
-**When to use MCP:** you want to integrate an external system (GitHub, Linear, Vercel, Notion) and consume its native tool surface without reimplementing it.
+**When to use MCP:** you already run or subscribe to an MCP-compatible server and want those tools callable by name without hand-writing each integration in this repo.
 
 ---
 
 ### Subagent
-A **subagent** is a delegated reasoning unit — not a new source of privileges.
+A **subagent** here is a **child run** on the same `session_id` with `parent_run_id` set, `trigger: "subagent"`, and `subagent_depth` incremented. **`packages/agent-runtime`** enforces **`MAX_SUBAGENT_DEPTH` (3)** from **`@vela/types`**: deeper spawn request fails with a clear error. In the web UI, sending a message that starts with **`subagent:`** runs this path for the current run.
 
-A subagent:
-- Inherits a constrained subset of the parent session's tools and policies
-- Cannot self-elevate permissions
-- Cannot spawn further subagents (in v1)
-- Operates within a scoped context with its own run record
-
-**When to use a subagent:** you want to parallelize reasoning or delegate a bounded subtask — not to expand what the system can do.
+**When to use a subagent:** isolate a sub-goal in its own run record while keeping audit and approvals on the parent session context.
 
 ```
 Parent agent: task decomposition, approval gating, final synthesis
@@ -448,24 +463,13 @@ The policy engine is an explicit, centralized authorization layer. It runs **bef
 
 Rather than scattering permission checks across handlers, skills, and tool executors, all authorization flows through a single interface.
 
-### Core policy functions
+### Implemented in `packages/policy-engine`
 
-```ts
-// Can this agent call this tool in this session?
-canUseTool(agentId: string, sessionId: string, toolId: string): PolicyResult
+- **`canUseTool(db, { agentId, tenantId, sessionId, toolId })`** — returns **`PolicyResult`**. Logic today: load `tools_registry` row; if **`required_secret_provider`** is set, require an **active** `secret_bindings` row for that tenant (agent-scoped or tenant-scoped) via **`findActiveSecretBinding`** (also runs **`expireStaleSecretBindings`**); require an **enabled** `tool_bindings` row; if the tool has **`requires_approval: true`**, result is **`allowed: true`** with **`requires_approval: true`** (approval is created later in the agent/tool path, not in this function).
 
-// Does this tool call require human approval before execution?
-requiresApproval(toolId: string, scope: string, resource: string): boolean
+- **Secret lifecycle** — **`createSecretBinding`**, **`rotateSecretBinding`**, **`revokeSecretBinding`**, **`listSecretBindings`**, **`expireStaleSecretBindings`** (used from tooling and from secret lookup).
 
-// Can this agent use this secret for this provider/scope?
-canUseSecret(agentId: string, tenantId: string, provider: string, scope: string): PolicyResult
-
-// Can this agent spawn a subagent from this template?
-canSpawnSubagent(agentId: string, templateId: string): PolicyResult
-
-// Can this agent load this skill in this session?
-canLoadSkill(agentId: string, sessionId: string, skillId: string): PolicyResult
-```
+There is **no** separate exported **`canUseSecret`**, **`canSpawnSubagent`**, or **`canLoadSkill`** yet; bindings and runtime gates cover what ships today.
 
 ### `PolicyResult`
 ```ts
@@ -477,16 +481,14 @@ canLoadSkill(agentId: string, sessionId: string, skillId: string): PolicyResult
 }
 ```
 
-### Policy evaluation order
+### Policy evaluation order (`canUseTool`)
 
-1. **Tenant-level block** — hard limits set by the tenant admin
-2. **Agent-level binding** — tool must be present in `tool_bindings` for this agent/tenant
-3. **Session-level override** — ephemeral grants or restrictions on the current session
-4. **Approval gate** — tool marked `requires_approval: true` in registry
-5. **Scope check** — secret binding must cover the required scope
+1. Tool exists in **`tools_registry`**.
+2. If **`required_secret_provider`** is set, an active, non-expired **`secret_bindings`** row must exist for that provider (housekeeping may mark past-due rows expired).
+3. **`tool_bindings`** must exist with **`enabled: true`** for this agent and tenant.
+4. If **`requires_approval`** on the tool: allow structurally but surface **`requires_approval: true`** so the runtime can pause and open an **`approvals`** row.
 
-If any layer denies: the action is blocked and an audit record is created.
-If approval is required: the run pauses, an `approvals` record is created, and the agent waits.
+Session-level overrides are reserved (**`sessionId`** is currently unused inside **`canUseTool`**).
 
 ### Approval flow
 
@@ -537,14 +539,7 @@ CREATED → READY → RUNNING → COMPLETED / FAILED → DESTROYED
 
 ### Snapshot contract
 
-Before a sandbox is destroyed or suspended, the workflow executor must flush:
-
-1. **Code changes** → as a patchset to Git or Blob
-2. **Generated files** → as artifacts to Blob, registered in `artifacts` table
-3. **Logs** → appended to the run's log artifact
-4. **Metadata** → run status, step status, error messages → to Postgres
-
-Nothing else survives.
+The workflow integrates with **`packages/sandbox`** to record sandbox sessions and linked **`artifacts`** (Blob paths in Postgres). What persists is whatever steps explicitly write to **Blob** and **`artifacts`**, plus **run** / **run_steps** status in Postgres. There is no automatic “flush everything to Git” in this repo today.
 
 ### Sandbox ↔ Workflow integration
 
@@ -567,120 +562,50 @@ The Workflow layer coordinates. The Sandbox layer only executes.
 
 ```
 /
-├── apps/                           # (planned) not in repo yet
-│   ├── web/                        # Admin UI + observability dashboard (Next.js)
-│   └── docs/                       # Public documentation site
+├── apps/
+│   └── web/                        # Next.js: admin UI, `lib/ingest.ts`, `lib/chat-bot.ts` (Chat SDK)
+│       ├── app/                    # routes + `/api/channels/*` webhooks
+│       └── lib/
 │
 ├── packages/
-│   ├── control-plane/              # Core entities, state machine, run orchestration
-│   │   ├── src/
-│   │   │   ├── agents/
-│   │   │   ├── sessions/
-│   │   │   ├── runs/
-│   │   │   ├── approvals/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── agent-runtime/              # AI SDK tool loop, context assembly, response handling
-│   │   ├── src/
-│   │   │   ├── loop/
-│   │   │   ├── context-builder/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── skill-resolver/             # Skill registry, search, load, attach logic
-│   │   ├── src/
-│   │   │   ├── registry/
-│   │   │   ├── resolver/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── tool-router/                # Tool registry, MCP bridge, policy pre-check, execution
-│   │   ├── src/
-│   │   │   ├── registry/
-│   │   │   ├── mcp-bridge/
-│   │   │   ├── channel-tools/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── policy-engine/              # canUseTool, canUseSecret, requiresApproval, etc.
-│   │   ├── src/
-│   │   │   ├── evaluators/
-│   │   │   ├── approval-gate/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── workflow/                   # Durable run execution, step management, retries
-│   │   ├── src/
-│   │   │   ├── engine/
-│   │   │   ├── steps/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── sandbox/                    # Isolated executor, snapshot management, lifecycle
-│   │   ├── src/
-│   │   │   ├── lifecycle/
-│   │   │   ├── snapshot/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── memory/                     # Short-term, working memory, long-term vector retrieval
-│   │   ├── src/
-│   │   │   ├── short-term/
-│   │   │   ├── working/
-│   │   │   ├── long-term/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── channels/                   # Chat SDK adapters: Slack, Web, Discord, Teams
-│   │   ├── src/
-│   │   │   ├── slack/
-│   │   │   ├── web/
-│   │   │   ├── discord/
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   ├── db/                         # Postgres schema, migrations, typed query layer
+│   ├── control-plane/              # Runs, sessions, threads, messages helpers; service.ts
+│   │   └── src/
+│   ├── agent-runtime/              # loop.ts, resume.ts, subagent.ts, approvals.ts
+│   │   └── src/
+│   ├── skill-resolver/             # Keyword / intent routing to skills
+│   │   └── src/
+│   ├── tool-router/                # Builtin + MCP dispatch, mcp.ts
+│   │   └── src/
+│   ├── policy-engine/              # canUseTool, secret lifecycle (secrets.ts)
+│   │   └── src/
+│   ├── workflow/                   # Executor, retries, approval metadata on steps
+│   │   └── src/
+│   ├── sandbox/                    # DB-backed sandbox session + allowlisted ops
+│   │   └── src/
+│   ├── memory/                     # Short-term load, working_memory format, long-term.ts
+│   │   └── src/
+│   ├── channels/                 # slack | discord | teams helpers
+│   │   └── src/
+│   ├── capabilities/             # capability_packages + installs registry
+│   │   └── src/
+│   ├── db/                         # Drizzle schema + migrations
 │   │   ├── migrations/
-│   │   ├── src/
-│   │   └── package.json
-│   │
-│   └── types/                      # Shared TypeScript types across all packages
-│       ├── src/
-│       └── package.json
+│   │   └── src/
+│   └── types/                      # Shared TS types + constants (e.g. MAX_SUBAGENT_DEPTH)
+│       └── src/
 │
-├── skills/                         # Built-in skills (community skills go here via PR)
-│   ├── github-pr-review/
-│   ├── linear-issue-triage/
-│   └── ...
-│
-├── tools/                          # Built-in core tools
-│   ├── web-search/
-│   ├── code-eval/
-│   └── ...
+├── skills/                         # Seed / reference skill content (see repo)
+├── tools/                          # Placeholder tree for future built-in tool layouts
 │
 ├── turbo.json
 ├── pnpm-workspace.yaml
-├── LICENSE                         # MIT — full legal text
+├── LICENSE
 └── README.md
 ```
 
-### Package dependency rules
+### Package dependency rules (approximate)
 
-```
-channels         → control-plane, types
-control-plane    → db, policy-engine, types
-agent-runtime    → skill-resolver, tool-router, memory, types
-skill-resolver   → db, types
-tool-router      → policy-engine, db, types
-policy-engine    → db, types
-workflow         → sandbox, db, types
-sandbox          → types
-memory           → db, types
-db               → types
-```
-
-No circular dependencies. `types` and `db` are the only shared leaves.
+Workspace packages import **`@vela/db`** and **`@vela/types`** as leaves. **`apps/web`** composes **`control-plane`**, **`agent-runtime`**, **`workflow`**, **`capabilities`**, **`policy-engine`**, **`tool-router`**, and **`chat`** / **`@chat-adapter/*`** for multi-channel ingress (see **`package.json`**). **`packages/channels`** remains for optional helpers and tests. See each **`package.json`** for the exact graph.
 
 ---
 
@@ -690,7 +615,7 @@ Before the agent loop runs, the system resolves the full execution context in a 
 
 ```
 1. Resolve thread
-     └── Find or create thread record from channel event
+     └── From Chat SDK **`thread.id`** as **`channel_ref`** (or web **`channelRef`**) via **`getOrCreateThread`**
 
 2. Resolve session
      └── Find active session for thread + agent, or create new one
@@ -703,13 +628,13 @@ Before the agent loop runs, the system resolves the full execution context in a 
      └── Query long-term if relevant (vector similarity)
 
 5. Resolve policies
-     └── Load tool bindings, secret bindings, session overrides for this agent/tenant
+     └── Tool bindings + secret requirements enforced at tool call time (`canUseTool`); secret lifecycle helpers keep `secret_bindings` status accurate
 
 6. Resolve candidate skills
-     └── Skill resolver: based on message intent, what skills should be active?
+     └── Skill resolver attaches skills for the run from registry + heuristics (see `@vela/skill-resolver`)
 
 7. Resolve effective tools
-     └── Tool Router: given active skills + tool bindings + policies, what tools are available?
+     └── Tool Router: builtins, channel tools, and MCP-backed tools registered after sync; each call still passes `canUseTool`
 
 8. Run agent loop
      └── AI SDK: reason, call tools, receive results, respond
@@ -722,11 +647,11 @@ The agent receives a fully assembled context. It does not need to discover or ne
 ## Roadmap
 
 ### v1 — Core system
-- [x] Slack channel (Events API verification + webhook; Chat SDK adapter later)
+- [x] Slack channel — Events API verification + `POST /api/channels/slack/events`
 - [x] Control Plane — entity schema + Postgres (Drizzle)
 - [x] Agent Runtime — AI SDK loop + builtin tools
 - [x] Skill Resolver — keyword routing + registry
-- [x] Tool Router — builtin tools (MCP bridge later)
+- [x] Tool Router — builtins first; MCP surfaced in v2 (see below)
 - [x] Policy Engine — tool bindings + approval gate
 - [x] Workflow — durable linear executor (retries, `retrying` + `next_retry_at`, approvals between steps)
 - [x] Sandbox — DB-backed sandbox session + allowlisted ops + Blob snapshot + `artifacts.run_step_id`
@@ -736,19 +661,19 @@ The agent receives a fully assembled context. It does not need to discover or ne
 - [x] Built-in skills (PR review, issue triage seeds)
 
 ### v2 — Capability expansion
-- [x] Additional channels (Web, Discord, Teams) — unified ingest; Slack Events API + Discord Interactions + Teams messaging webhook stubs
+- [x] Additional channels (Web, Discord, Teams) — Chat SDK adapters + unified **`ingest`**; **`REDIS_URL`** recommended in production for thread subscription state
 - [x] OAuth + full secret lifecycle (rotation, expiration, revocation) — DB + `packages/policy-engine` + `/api/secrets*`; expiration via status + housekeeping; enforcement in `canUseTool` / tool router
 - [x] Long-term vector memory — `memory_embeddings` + `@vela/memory` (embed + retrieve + compaction); wired in agent loop when enabled
-- [x] Subagent support (template-based, no nesting) — **not reintroduced**; superseded by v3 dynamic spawning (see below)
+- [x] Legacy “template subagent (no nesting)” — **not shipped**; dynamic child runs under v3 (see below)
 - [x] Richer admin UI with observability — run list filters, per-run event timeline, secrets & MCP admin pages
 - [x] MCP registry + dynamic tool discovery — `mcp_registry` / `mcp_discovered_tools`, sync API, execution via tool router with approvals
 
 ### v3 — Ecosystem & governance (OSS)
 Shipping as **MIT-licensed infrastructure**: self-hosted operator tooling and community-contributed packs — not a SaaS product line.
 
-- [ ] Advanced approval workflows (quorum, expiry, auditable reject reason)
-- [ ] Dynamic subagent spawning (parent/child runs, depth limits) — early work exists in agent-runtime; not “done” as a productized contract yet
-- [ ] Capability marketplace (versioned OSS packs: manifest, install/enable per tenant/agent)
+- [x] Advanced approval workflows — `approvals` supports **`quorum_required`**, **`votes`**, **`expires_at`** (expired approvals fail the run via **`expireStaleApprovals`**), and **`POST /api/approvals/:id`** rejects only with a **non-empty reason** (`rejectApproval`)
+- [x] Dynamic subagent spawning — child **`runs`** with **`parent_run_id`**, **`subagent_depth`**, **`MAX_SUBAGENT_DEPTH = 3`**, and **`subagent:`** prefix in the agent loop (**`packages/agent-runtime/src/subagent.ts`**)
+- [x] Capability marketplace (OSS install path) — **`capability_packages`** / **`capability_installs`**, **`@vela/capabilities`**, **`GET`/`POST /api/capabilities`**, admin UI **`/capabilities`**
 
 ---
 
@@ -759,10 +684,12 @@ Shipping as **MIT-licensed infrastructure**: self-hosted operator tooling and co
 3. **Vercel Blob:** Enable Blob and set `BLOB_READ_WRITE_TOKEN` where uploads are used.
 4. **AI (optional):** Enable AI Gateway on the Vercel project and run `vercel env pull` so `VERCEL_OIDC_TOKEN` and related vars exist locally for `generateText` in the agent runtime.
 5. **Migrate:** From repo root, `pnpm install` then run Drizzle migrations against `DATABASE_URL` (see `@vela/db` scripts `db:generate` / `db:migrate`).
-6. **Run web:** `pnpm dev` (or deploy) — health checks: `GET /api/health/db`, `GET /api/health/blob`. Post a message: `POST /api/events/web` with JSON `{ "text": "hello" }`.
-7. **Durable workflow (dev):** send a message starting with `workflow:` followed by a JSON array of steps (see `@vela/workflow` / `WorkflowStepSpec`). Poke continuation after delays: `POST /api/runs/:id/workflow`. Optional: `VELA_SHORT_TERM_MESSAGE_LIMIT` caps messages loaded into the model context.
+6. **Run web:** `pnpm dev` (or deploy) — health: `GET /api/health/db`, `GET /api/health/blob`. Ingest: `POST /api/events/web` with JSON `{ "text": "hello" }`. Admin: `/`, `/runs`, `/runs/[id]`, `/approvals`, `/capabilities`, `/secrets`, `/mcp`.
+7. **Durable workflow (dev):** message starting with `workflow:` + JSON step array; continue with `POST /api/runs/:id/workflow`. Step args may include `quorumRequired`, `expiresInMinutes`, `approvalType` (see `@vela/workflow` / `approval-meta`).
+8. **Secrets & MCP (v2):** `GET`/`POST /api/secrets`, `POST /api/secrets/:id/rotate`, `POST /api/secrets/:id/revoke`. `GET`/`POST /api/mcp` to sync discovered tools. Optional **`VELA_LONG_TERM_MEMORY`** / **`VELA_EMBEDDING_MODEL`** (see **`.env.example`**).
+9. **Chat SDK channels:** Configure **[Chat SDK](https://chat-sdk.dev/)** env vars from **`.env.example`**: **`SLACK_BOT_TOKEN`** + **`SLACK_SIGNING_SECRET`**; **`DISCORD_BOT_TOKEN`** + **`DISCORD_PUBLIC_KEY`** + **`DISCORD_APPLICATION_ID`**; **`TEAMS_APP_ID`** + **`TEAMS_APP_PASSWORD`** (and tenant if required). Set **`REDIS_URL`** in production so subscriptions survive serverless cold starts. Endpoints: `POST /api/channels/slack/events`, `POST /api/channels/discord/interactions`, `POST /api/channels/teams/messages`. The web app lists **`discord.js`** / **`zlib-sync`** as **`serverExternalPackages`** so Turbopack can build; at runtime the Discord adapter resolves optional native deps like any Node bot.
 
-**Slack:** Configure `SLACK_SIGNING_SECRET`, expose `POST /api/channels/slack/events`, and map workspace/channel IDs as needed (see code in `apps/web` and `packages/channels`).
+**Env reference:** copy **`.env.example`**; for AI embeddings / long-term memory you need a working AI Gateway or provider configuration consistent with how **`packages/memory`** calls **`embed()`**.
 
 ---
 

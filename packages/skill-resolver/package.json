@@ -11,6 +11,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "ai": "^6.0.0",
     "@vela/db": "workspace:*",
     "@vela/types": "workspace:*",
     "drizzle-orm": "^0.36.4"

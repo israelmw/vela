@@ -1,12 +1,7 @@
 import type { DB } from "@vela/db";
-import { artifacts, runSteps } from "@vela/db";
+import { runSteps } from "@vela/db";
 import type { InferSelectModel } from "drizzle-orm";
-import {
-  createSandboxForRun,
-  destroySandboxForRun,
-  executeSandboxOperation,
-  snapshotSandboxState,
-} from "@vela/sandbox";
+import { executeSandboxStepForRun } from "@vela/sandbox";
 import { executeBuiltinTool } from "@vela/tool-router";
 import { expiresAtFromMinutes, stripApprovalToolMeta } from "./approval-meta";
 import type { StepDriverResult } from "./executor";
@@ -44,36 +39,19 @@ export function createBuiltinWorkflowStepExecutor(
         };
 
       case "artifact": {
-        const handle = await createSandboxForRun(ctx.db, { runId: ctx.runId });
-        try {
-          const op = (step.toolInput ?? {}) as {
-            kind?: string;
-            payload?: unknown;
-          };
-          const out = await executeSandboxOperation(handle, {
+        const op = (step.toolInput ?? {}) as {
+          kind?: string;
+          payload?: unknown;
+        };
+        await executeSandboxStepForRun(ctx.db, {
+          runId: ctx.runId,
+          runStepId: step.id,
+          stepIndex: step.stepIndex,
+          op: {
             kind: (op.kind as "echo" | "add") ?? "echo",
             payload: op.payload ?? {},
-          });
-          const snap = await snapshotSandboxState({
-            runId: ctx.runId,
-            label: `step-${step.stepIndex}`,
-            payload: out,
-          });
-          if ("url" in snap) {
-            const serialized = JSON.stringify(out);
-            await ctx.db.insert(artifacts).values({
-              runId: ctx.runId,
-              runStepId: step.id,
-              name: `sandbox-step-${step.stepIndex}.json`,
-              type: "data",
-              blobPath: snap.url,
-              mimeType: "application/json",
-              sizeBytes: Buffer.byteLength(serialized, "utf8"),
-            });
-          }
-        } finally {
-          await destroySandboxForRun(ctx.db, handle.id);
-        }
+          },
+        });
         return { kind: "success", output: { sandbox: "snapshot" } };
       }
 
@@ -92,6 +70,7 @@ export function createBuiltinWorkflowStepExecutor(
           agentId: ctx.agentId,
           tenantId: ctx.tenantId,
           sessionId: ctx.sessionId,
+          runId: ctx.runId,
           toolId,
           args: cleanArgs,
         });

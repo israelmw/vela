@@ -1,18 +1,13 @@
-import { and, eq } from "drizzle-orm";
 import { ensureDefaultAgent } from "@vela/control-plane";
 import { db } from "@vela/db";
-import {
-  mcpDiscoveredTools,
-  mcpRegistry,
-  toolBindings,
-} from "@vela/db";
-import {
-  discoverMcpTools,
-  mcpToolRegistryId,
-  syncMcpToolsToRegistry,
-} from "@vela/tool-router";
+import { mcpDiscoveredTools, mcpRegistry } from "@vela/db";
+import { discoverMcpTools, syncMcpToolsToRegistry } from "@vela/tool-router";
 import { NextResponse } from "next/server";
 import { DEFAULT_TENANT_ID } from "@vela/types";
+import {
+  ensureBindingsForMcp,
+  syncAllMcpServersForTenant,
+} from "../../../lib/mcp-autosync";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -25,51 +20,27 @@ export async function GET(req: Request) {
   return NextResponse.json({ servers, discovered });
 }
 
-async function ensureBindingsForMcp(
-  mcpId: string,
-  tenantId: string,
-  agentId: string,
-) {
-  const rows = await db
-    .select()
-    .from(mcpDiscoveredTools)
-    .where(eq(mcpDiscoveredTools.mcpId, mcpId));
-
-  for (const r of rows) {
-    const toolId = mcpToolRegistryId(mcpId, r.toolName);
-    const [existing] = await db
-      .select()
-      .from(toolBindings)
-      .where(
-        and(
-          eq(toolBindings.agentId, agentId),
-          eq(toolBindings.tenantId, tenantId),
-          eq(toolBindings.toolId, toolId),
-        ),
-      )
-      .limit(1);
-    if (!existing) {
-      await db.insert(toolBindings).values({
-        agentId,
-        tenantId,
-        toolId,
-        enabled: true,
-      });
-    }
-  }
-}
-
 export async function POST(req: Request) {
   const body = (await req.json()) as {
     tenantId?: string;
     mcpId?: string;
+    syncAll?: boolean;
   };
 
   const tenantId = body.tenantId ?? DEFAULT_TENANT_ID;
+
+  if (body.syncAll === true) {
+    const out = await syncAllMcpServersForTenant(tenantId);
+    return NextResponse.json(out);
+  }
+
   const mcpId = body.mcpId?.trim();
 
   if (!mcpId) {
-    return NextResponse.json({ error: "mcpId required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "mcpId required (or set syncAll: true)" },
+      { status: 400 },
+    );
   }
 
   const agent = await ensureDefaultAgent(db, tenantId);

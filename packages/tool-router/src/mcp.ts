@@ -176,6 +176,41 @@ export async function syncMcpToolsToRegistry(db: DB, mcpId: string) {
   }
 }
 
+function mcpCatalogNeedsRefresh(server: {
+  lastHealthCheck: Date | null;
+  lastHealthOk: boolean | null;
+}): boolean {
+  const ttl = Number(process.env.VELA_MCP_HEALTH_REFRESH_MS ?? "120000");
+  if (server.lastHealthOk === false) return true;
+  if (server.lastHealthCheck == null) return true;
+  return Date.now() - server.lastHealthCheck.getTime() > ttl;
+}
+
+/**
+ * If the server looks stale or unhealthy, re-run tools/list and sync tools_registry.
+ * Called on the MCP tool execution path so discovery is driven by real traffic + health,
+ * not only ingest/cron throttles.
+ */
+export async function maybeRefreshMcpCatalog(
+  db: DB,
+  mcpId: string,
+  server?: { lastHealthCheck: Date | null; lastHealthOk: boolean | null },
+): Promise<void> {
+  const row =
+    server ??
+    (await db
+      .select({
+        lastHealthCheck: mcpRegistry.lastHealthCheck,
+        lastHealthOk: mcpRegistry.lastHealthOk,
+      })
+      .from(mcpRegistry)
+      .where(eq(mcpRegistry.id, mcpId))
+      .limit(1))[0];
+  if (!row || !mcpCatalogNeedsRefresh(row)) return;
+  const d = await discoverMcpTools(db, mcpId);
+  if (d.ok) await syncMcpToolsToRegistry(db, mcpId);
+}
+
 export async function callMcpTool(
   db: DB,
   tool: InferSelectModel<typeof toolsRegistry>,
@@ -213,11 +248,22 @@ export async function callMcpTool(
     };
   }
 
+  await maybeRefreshMcpCatalog(db, mcpId, server);
+
   const headers = authHeaders(server);
-  const rpc = await jsonRpc(server.url, headers, "tools/call", {
+  let rpc = await jsonRpc(server.url, headers, "tools/call", {
     name: toolName,
     arguments: params.args ?? {},
   });
+
+  if (!rpc.ok) {
+    const healed = await discoverMcpTools(db, mcpId);
+    if (healed.ok) await syncMcpToolsToRegistry(db, mcpId);
+    rpc = await jsonRpc(server.url, headers, "tools/call", {
+      name: toolName,
+      arguments: params.args ?? {},
+    });
+  }
 
   if (!rpc.ok) {
     return { ok: false, error: rpc.error, code: "denied" };
