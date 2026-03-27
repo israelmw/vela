@@ -18,6 +18,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Vela",
   description: "Cloud-native operating system for AI agents",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
+  themeColor: "#07090c",
+  appleWebApp: {
+    capable: true,
+    title: "Vela",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default function RootLayout({
