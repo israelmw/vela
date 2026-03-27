@@ -142,3 +142,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vercel
 .env*.local
+
+# Temporary files
+.tmp

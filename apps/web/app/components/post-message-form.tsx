@@ -36,23 +36,22 @@ export function PostMessageForm() {
   }
 
   return (
-    <form className="stack" onSubmit={onSubmit}>
-      <label className="label" htmlFor="msg">
-        Send a message (try{" "}
-        <code className="mono">echo: hello</code>,{" "}
-        <code className="mono">risky: change</code>, or plain text for the model)
+    <form className="stack terminal-composer" onSubmit={onSubmit}>
+      <label className="label mono" htmlFor="msg">
+        {">"} prompt input (try <code>echo: hello</code> /{" "}
+        <code>risky: change</code> / plain text)
       </label>
       <textarea
         id="msg"
-        className="input"
+        className="input mono"
         rows={3}
         value={text}
         onChange={(ev) => setText(ev.target.value)}
-        placeholder="Hello Vela"
+        placeholder="ask vela…"
       />
       <div className="row">
         <button type="submit" className="btn" disabled={busy || !text.trim()}>
-          {busy ? "Running…" : "Run turn"}
+          {busy ? "running..." : "run turn"}
         </button>
         {error ? <p className="error">{error}</p> : null}
       </div>

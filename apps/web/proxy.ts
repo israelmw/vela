@@ -6,10 +6,12 @@ import { NextResponse } from "next/server";
  * cannot burn AI/DB credits. Optional VELA_SITE_USER (default: vela).
  *
  * Not applied to:
+ * - / (public landing)
  * - /api/health/* (uptime checks)
  * - /api/channels/* (Slack/Discord/Teams verify signatures themselves)
  * - /api/cron/* (protected by CRON_SECRET inside the route)
  */
+const PUBLIC_EXACT = ["/"];
 const PUBLIC_PREFIXES = [
   "/api/health/",
   "/api/channels/",
@@ -49,7 +51,10 @@ export function proxy(req: NextRequest) {
   }
 
   const { pathname } = req.nextUrl;
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
+  if (
+    PUBLIC_EXACT.includes(pathname) ||
+    PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))
+  ) {
     return NextResponse.next();
   }
 

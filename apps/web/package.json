@@ -10,7 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.4",
     "@chat-adapter/discord": "4.23.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "@chat-adapter/slack": "4.23.0",
     "@chat-adapter/state-memory": "4.23.0",
     "@chat-adapter/state-redis": "4.23.0",
@@ -26,14 +30,19 @@
     "@vela/workflow": "workspace:*",
     "chat": "4.23.0",
     "drizzle-orm": "^0.36.4",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
     "next": "16.2.0",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.4.0"
   }
 }
