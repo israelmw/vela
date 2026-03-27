@@ -16,6 +16,7 @@ export function PostMessageForm() {
     try {
       const res = await fetch("/api/events/web", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
