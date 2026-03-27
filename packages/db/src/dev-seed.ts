@@ -94,7 +94,9 @@ export async function ensureDevCatalog(
         description: "Review pull requests with structured output.",
         version: "0.0.1",
         instructions:
-          "When reviewing a PR, fetch context, list risks, and suggest tests.",
+          "When reviewing a PR, fetch context, list risks, and suggest tests. " +
+          "Vela does not install a GitHub App: any GitHub API use relies on credentials the operator stores under Vela Secrets (provider such as `github`, e.g. a PAT or fine-grained token from GitHub). " +
+          "If the user lacks access, tell them to add that token via /console/secrets—not to configure a fictional Vela GitHub App.",
         files: [],
         requiredTools: ["vela.web_search_stub"],
         requiredMcp: [],

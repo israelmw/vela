@@ -26,8 +26,8 @@ const navItems = [
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
-    <div className="min-h-screen bg-[#07090c] text-[#e8ecf4] flex">
-      <div className="w-[200px] border-r border-[#1f2635] bg-[#0a0e16] flex flex-col">
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-[#07090c] text-[#e8ecf4]">
+      <div className="flex w-[200px] min-h-0 shrink-0 flex-col border-r border-[#1f2635] bg-[#0a0e16]">
         <div className="px-4 py-6 border-b border-[#1f2635]">
           <div className="font-mono text-xs" style={{ color: "#a9b1c4" }}>
             vela://console
@@ -66,7 +66,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
           </Select>
         </div>
       </div>
-      <div className="flex-1 flex flex-col overflow-hidden">{children}</div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
     </div>
   );
 }

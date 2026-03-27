@@ -3,10 +3,20 @@
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { MessageResponse } from "@/components/ai-elements/message";
 import { CommandInput, RunCard, StatusDot } from "../../components/vela";
 
 /** Stable thread for the web console so turns accumulate in one session. */
 const CONSOLE_CHANNEL_REF = "vela-console";
+
+/** Geist Mono for assistant markdown (Streamdown wraps content in nested tags). */
+const assistantMarkdownTypography =
+  "font-[family-name:var(--font-geist-mono),ui-monospace,monospace] [&_*]:font-[family-name:var(--font-geist-mono),ui-monospace,monospace]";
 
 type RunItem = {
   id: string;
@@ -16,9 +26,11 @@ type RunItem = {
   steps: { type: string; tool: string; duration: string; status: "ok" | "warn" | "err" }[];
 };
 
-type ChatLine =
-  | { id: string; role: "user"; text: string }
-  | { id: string; role: "system"; text: string; runId: string };
+type ChatLine = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
 
 function refreshRuns(setRuns: (r: RunItem[]) => void) {
   fetch("/api/console/runs", { credentials: "include" })
@@ -32,58 +44,69 @@ export default function RunsPage() {
   const [lines, setLines] = React.useState<ChatLine[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const transcriptRef = React.useRef<HTMLDivElement>(null);
+  const [lastRunId, setLastRunId] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    refreshRuns(setRuns);
+  const loadChat = React.useCallback(async () => {
+    const r = await fetch(
+      `/api/console/chat?channelRef=${encodeURIComponent(CONSOLE_CHANNEL_REF)}`,
+      { credentials: "include" },
+    );
+    const d = (await r.json()) as {
+      messages?: { id: string; role: string; text: string }[];
+    };
+    const raw = d.messages ?? [];
+    setLines(
+      raw
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          text: typeof m.text === "string" ? m.text : String(m.text ?? ""),
+        })),
+    );
   }, []);
 
   React.useEffect(() => {
-    transcriptRef.current?.scrollTo({
-      top: transcriptRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [lines]);
+    refreshRuns(setRuns);
+    loadChat().catch(() => setLines([]));
+  }, [loadChat]);
 
   async function handleSend(text: string) {
     if (busy) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setLines((prev) => [...prev, { id: optimisticId, role: "user", text: trimmed }]);
+
     setBusy(true);
     setError(null);
-    const userLine: ChatLine = {
-      id: crypto.randomUUID(),
-      role: "user",
-      text,
-    };
-    setLines((prev) => [...prev, userLine]);
     try {
       const res = await fetch("/api/events/web", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text,
+          text: trimmed,
           channelRef: CONSOLE_CHANNEL_REF,
         }),
       });
-      const json = (await res.json()) as { error?: string; runId?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        runId?: string;
+        assistantText?: string;
+      };
       if (!res.ok) {
         throw new Error(json.error ?? res.statusText);
       }
-      const runId = json.runId;
-      if (!runId) {
+      if (!json.runId) {
         throw new Error("missing runId in response");
       }
-      setLines((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "system",
-          text: "Turn completed — agent run finished for this message.",
-          runId,
-        },
-      ]);
+      setLastRunId(json.runId);
+      await loadChat();
       refreshRuns(setRuns);
     } catch (e) {
+      setLines((prev) => prev.filter((l) => l.id !== optimisticId));
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
     } finally {
@@ -92,111 +115,147 @@ export default function RunsPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="border-b border-[#1f2635] bg-[#0a0e16] px-6 py-4 space-y-2">
-        <CommandInput
-          placeholder="Message the agent… (Enter to send — same thread as console)"
-          onSubmit={handleSend}
-          disabled={busy}
-        />
-        <p className="font-mono text-[10px] text-[#6b7280]">
-          Session <span className="text-[#a9b1c4]">{CONSOLE_CHANNEL_REF}</span>
-          {" · "}
-          one agent run per message.
-        </p>
-        {error ? (
-          <p className="font-mono text-xs text-[#fca5a5]">{error}</p>
-        ) : null}
-      </div>
-      <div className="flex-1 flex overflow-hidden">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex-1 overflow-y-auto p-6 space-y-4 border-r border-[#1f2635] flex flex-col min-h-0"
-        >
-          <div>
-            <h2 className="font-mono text-sm mb-2" style={{ color: "#a9b1c4" }}>
-              Conversation
-            </h2>
-            <div
-              ref={transcriptRef}
-              className="max-h-48 overflow-y-auto rounded-lg border border-[#1f2635] bg-[#060910] p-3 space-y-2"
-            >
-              {lines.length === 0 ? (
-                <p className="font-mono text-xs text-[#6b7280]">
-                  No messages yet. Each send runs one agent turn (like the old “prompt
-                  input” on the home console).
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-[#1f2635]">
+          <Conversation className="min-h-0">
+            <ConversationContent className="gap-4 px-6 py-5">
+              <div className="flex shrink-0 items-center justify-between gap-2">
+                <h2
+                  className="font-mono text-xs uppercase tracking-wide"
+                  style={{ color: "#6b7280" }}
+                >
+                  Chat
+                </h2>
+                {lastRunId ? (
+                  <Link
+                    href={`/console/runs/${lastRunId}`}
+                    className="shrink-0 font-mono text-[10px] text-[#52a7ff] hover:underline"
+                  >
+                    Last run · debug
+                  </Link>
+                ) : null}
+              </div>
+              {lines.length === 0 && !busy ? (
+                <p className="max-w-lg font-mono text-sm text-[#6b7280]">
+                  Send a message to talk to the agent. Replies show here; one agent turn runs per
+                  message (same session thread{" "}
+                  <span className="text-[#a9b1c4]">{CONSOLE_CHANNEL_REF}</span>).
                 </p>
               ) : (
-                lines.map((line) =>
-                  line.role === "user" ? (
-                    <div key={line.id} className="font-mono text-sm text-[#e8ecf4]">
-                      <span className="text-[#6ee7b7]">you</span>{" "}
-                      <span className="text-[#a9b1c4]">·</span> {line.text}
+                <div className="flex flex-col gap-4">
+                  {lines.map((line, idx) =>
+                    line.role === "user" ? (
+                      <div key={`${line.id}-user-${idx}`} className="flex justify-end">
+                        <div className="max-w-[min(100%,42rem)] rounded-lg border border-[#52a7ff]/25 bg-[#52a7ff]/8 px-4 py-3">
+                          <div className="mb-1 font-mono text-[10px] text-[#6ee7b7]">you</div>
+                          <div className="wrap-break-word font-mono text-sm whitespace-pre-wrap text-[#e8ecf4]">
+                            {line.text}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={`${line.id}-assistant-${idx}`} className="flex justify-start">
+                        <div className="max-w-[min(100%,42rem)] rounded-lg border border-[#1f2635] bg-[#0f1218] px-4 py-3 shadow-sm">
+                          <div className="mb-1 font-mono text-[10px] text-[#52a7ff]">vela</div>
+                          <MessageResponse
+                            className={`max-w-none text-sm leading-relaxed text-[#e8ecf4] ${assistantMarkdownTypography}`}
+                          >
+                            {line.text}
+                          </MessageResponse>
+                        </div>
+                      </div>
+                    ),
+                  )}
+                  {busy ? (
+                    <div className="flex justify-start" aria-live="polite">
+                      <div className="max-w-[min(100%,42rem)] rounded-lg border border-[#1f2635] bg-[#0f1218] px-4 py-3 shadow-sm">
+                        <div className="mb-1 font-mono text-[10px] text-[#52a7ff]">vela</div>
+                        <div className="flex items-center gap-2 font-mono text-sm text-[#fcd34d]">
+                          <span
+                            className="inline-block size-2 shrink-0 animate-pulse rounded-full bg-[#fcd34d]"
+                            aria-hidden
+                          />
+                          thinking…
+                        </div>
+                      </div>
                     </div>
-                  ) : (
-                    <div key={line.id} className="font-mono text-sm text-[#a9b1c4]">
-                      <span className="text-[#52a7ff]">vela</span>{" "}
-                      <span className="text-[#6b7280]">·</span> {line.text}{" "}
-                      <Link
-                        href={`/console/runs/${line.runId}`}
-                        className="text-[#52a7ff] hover:underline"
-                      >
-                        open run {line.runId.slice(0, 8)}…
-                      </Link>
-                    </div>
-                  ),
-                )
+                  ) : null}
+                </div>
               )}
-            </div>
-          </div>
+            </ConversationContent>
+            <ConversationScrollButton
+              type="button"
+              variant="outline"
+              className="bottom-28 z-10 border-[#1f2635] bg-[#0f1218] text-[#a9b1c4] shadow-lg hover:bg-[#1f2635] dark:bg-[#0f1218] dark:hover:bg-[#1f2635]"
+            />
+          </Conversation>
 
-          <h2 className="font-mono text-sm mb-2" style={{ color: "#a9b1c4" }}>
-            Recent runs
-          </h2>
-          <div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
-            {runs.map((run) => (
-              <RunCard
-                key={run.id}
-                id={run.id}
-                status={run.status}
-                trigger={run.trigger}
-                timeAgo={new Date(run.startedAt).toLocaleString()}
-                steps={run.steps}
-              />
-            ))}
+          <div className="shrink-0 space-y-2 border-t border-[#1f2635] bg-[#0a0e16] px-6 py-4">
+            <CommandInput
+              multiline
+              placeholder="Message the agent… (Enter to send · Shift+Enter newline)"
+              onSubmit={handleSend}
+              disabled={busy}
+            />
+            <p className="font-mono text-[10px] text-[#6b7280]">
+              Session <span className="text-[#a9b1c4]">{CONSOLE_CHANNEL_REF}</span>
+            </p>
+            {error ? (
+              <p className="font-mono text-xs text-[#fca5a5]">{error}</p>
+            ) : null}
           </div>
-        </motion.div>
-        <motion.div
+        </div>
+
+        <motion.aside
           initial={{ opacity: 0, x: 12 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.1 }}
-          className="w-[280px] border-l border-[#1f2635] bg-[#0a0e16] overflow-y-auto"
+          transition={{ delay: 0.05 }}
+          className="flex min-h-0 w-[min(100%,280px)] shrink-0 flex-col overflow-hidden bg-[#0a0e16]"
         >
           <div className="border-b border-[#1f2635] p-4">
             <h3
-              className="font-mono text-xs font-semibold mb-4"
+              className="font-mono text-xs font-semibold mb-3"
               style={{ color: "#a9b1c4" }}
             >
-              System Status
+              System
             </h3>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {["Control Plane", "Agent Runtime", "Tool Router", "Workflow", "Sandbox"].map(
                 (layer) => (
-                  <div key={layer} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
+                  <div key={layer} className="flex items-center justify-between text-[10px] font-mono">
+                    <div className="flex items-center gap-2 min-w-0">
                       <StatusDot status="ok" size="sm" />
-                      <span className="font-mono" style={{ color: "#a9b1c4" }}>
-                        {layer}
-                      </span>
+                      <span className="text-[#a9b1c4] truncate">{layer}</span>
                     </div>
-                    <span className="font-mono text-[#6ee7b7]">ok</span>
+                    <span className="text-[#6ee7b7] shrink-0">ok</span>
                   </div>
                 ),
               )}
             </div>
           </div>
-        </motion.div>
+          <div className="p-4 flex-1 min-h-0 flex flex-col">
+            <h3 className="font-mono text-xs font-semibold mb-3" style={{ color: "#a9b1c4" }}>
+              Recent runs
+            </h3>
+            <div className="space-y-3 overflow-y-auto flex-1">
+              {runs.length === 0 ? (
+                <p className="font-mono text-[10px] text-[#6b7280]">No runs yet.</p>
+              ) : (
+                runs.map((run) => (
+                  <RunCard
+                    key={run.id}
+                    id={run.id}
+                    status={run.status}
+                    trigger={run.trigger}
+                    timeAgo={new Date(run.startedAt).toLocaleString()}
+                    steps={run.steps}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </motion.aside>
       </div>
     </div>
   );

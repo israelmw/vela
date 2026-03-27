@@ -91,24 +91,27 @@ export default function LandingPage() {
           </Link>
           <nav className="flex items-center gap-2 sm:gap-3 shrink-0">
             <Link
+              prefetch={false}
               href="/console/runs"
               className="hidden sm:inline font-mono text-xs text-[#a9b1c4] hover:text-[#52a7ff] transition-colors"
             >
               Runs
             </Link>
             <Link
+              prefetch={false}
               href="/console/approvals"
               className="hidden md:inline font-mono text-xs text-[#a9b1c4] hover:text-[#52a7ff] transition-colors"
             >
               Approvals
             </Link>
             <Link
+              prefetch={false}
               href="/console/mcp"
               className="hidden lg:inline font-mono text-xs text-[#a9b1c4] hover:text-[#52a7ff] transition-colors"
             >
               MCP
             </Link>
-            <Link href="/console">
+            <Link prefetch={false} href="/console">
               <Button
                 size="sm"
                 className="bg-[#52a7ff] text-[#07090c] hover:bg-[#52a7ff]/90 font-mono font-semibold"
@@ -144,7 +147,7 @@ export default function LandingPage() {
                 operate it through the web console and APIs you already deploy.
               </p>
               <div className="flex flex-wrap gap-3 mb-10">
-                <Link href="/console">
+                <Link prefetch={false} href="/console">
                   <Button
                     size="lg"
                     className="bg-[#52a7ff] text-[#07090c] hover:bg-[#52a7ff]/90 font-mono font-semibold"
@@ -152,7 +155,7 @@ export default function LandingPage() {
                     Open console
                   </Button>
                 </Link>
-                <Link href="/console/runs">
+                <Link prefetch={false} href="/console/runs">
                   <Button
                     size="lg"
                     variant="outline"
@@ -161,7 +164,7 @@ export default function LandingPage() {
                     View runs
                   </Button>
                 </Link>
-                <Link href="/console/skills">
+                <Link prefetch={false} href="/console/skills">
                   <Button
                     size="lg"
                     variant="outline"

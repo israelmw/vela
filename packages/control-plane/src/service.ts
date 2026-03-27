@@ -10,8 +10,13 @@ import {
 } from "@vela/db";
 import type { ChannelType } from "@vela/types";
 import { DEFAULT_TENANT_ID } from "@vela/types";
+import {
+  LEGACY_VELA_SYSTEM_PROMPTS,
+  VELA_DEFAULT_SYSTEM_PROMPT,
+} from "./default-system-prompt";
 
 export { DEFAULT_TENANT_ID };
+export { VELA_DEFAULT_SYSTEM_PROMPT, LEGACY_VELA_SYSTEM_PROMPTS } from "./default-system-prompt";
 
 export async function ensureDefaultAgent(
   db: DB,
@@ -23,7 +28,20 @@ export async function ensureDefaultAgent(
     .where(eq(agents.tenantId, tenantId))
     .limit(1);
 
-  if (existing) return existing;
+  if (existing) {
+    if (LEGACY_VELA_SYSTEM_PROMPTS.has(existing.systemPrompt)) {
+      const [row] = await db
+        .update(agents)
+        .set({
+          systemPrompt: VELA_DEFAULT_SYSTEM_PROMPT,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, existing.id))
+        .returning();
+      return row!;
+    }
+    return existing;
+  }
 
   const [row] = await db
     .insert(agents)
@@ -31,8 +49,7 @@ export async function ensureDefaultAgent(
       name: "default",
       description: "Default agent (scaffold)",
       model: "anthropic/claude-sonnet-4.6",
-      systemPrompt:
-        "You are Vela, a concise assistant for the control plane. Be brief.",
+      systemPrompt: VELA_DEFAULT_SYSTEM_PROMPT,
       tenantId,
       defaultSkills: [],
       allowedChannels: ["web", "slack"],

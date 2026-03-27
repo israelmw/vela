@@ -55,31 +55,35 @@ export function RunCard({
       className="border border-[#1f2635] rounded-lg bg-[#0f1218] p-4 hover:bg-[#0a0e16] transition-colors"
     >
       <div
-        className="flex items-center justify-between cursor-pointer"
+        className="cursor-pointer space-y-2"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          <div className="font-mono text-xs text-[#a9b1c4] truncate">
-            {id.slice(0, 8)}
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-mono text-xs text-[#a9b1c4] tabular-nums shrink-0">
+              {id.slice(0, 8)}
+            </span>
+            <span
+              className="px-2 py-0.5 rounded border text-[10px] font-mono uppercase tracking-wide shrink-0"
+              style={{
+                borderColor: statusColors[status],
+                color: statusColors[status],
+              }}
+            >
+              {statusLabels[status]}
+            </span>
           </div>
-          <div
-            className="px-2 py-1 rounded border text-xs font-mono"
-            style={{
-              borderColor: statusColors[status],
-              color: statusColors[status],
-            }}
-          >
-            {statusLabels[status]}
-          </div>
-          <div className="text-sm text-[#e8ecf4] flex-1 truncate">{trigger}</div>
-        </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <span className="text-xs text-[#a9b1c4]">{timeAgo}</span>
           <ChevronDown
             size={16}
-            className="text-[#a9b1c4] transition-transform"
+            className="shrink-0 text-[#a9b1c4] transition-transform"
             style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
           />
+        </div>
+        <div className="text-sm text-[#e8ecf4] min-w-0 truncate" title={trigger}>
+          {trigger}
+        </div>
+        <div className="text-xs text-[#a9b1c4] font-mono tabular-nums wrap-break-word">
+          {timeAgo}
         </div>
       </div>
 

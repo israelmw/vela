@@ -10,7 +10,8 @@ import {
   ensureDemoCapabilityPack,
   listInstalledSkillIdsForAgent,
 } from "@vela/capabilities";
-import { db, ensureDevCatalog } from "@vela/db";
+import { db, ensureDevCatalog, messages } from "@vela/db";
+import { and, desc, eq, gt } from "drizzle-orm";
 import {
   attachSkillsToRun,
   resolveSkillIdsForText,
@@ -21,6 +22,27 @@ import type { ChannelType } from "@vela/types";
 import { DEFAULT_TENANT_ID } from "@vela/types";
 import { log } from "./logger";
 import { maybeAutoSyncMcpTools } from "./mcp-autosync";
+
+async function latestAssistantAfterUserMessage(
+  sessionId: string,
+  userCreatedAt: Date,
+): Promise<string | null> {
+  const [row] = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.sessionId, sessionId),
+        eq(messages.role, "assistant"),
+        gt(messages.createdAt, userCreatedAt),
+      ),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const c = row.content as { text?: unknown };
+  return typeof c.text === "string" ? c.text : null;
+}
 
 export async function ingestUserMessage(input: {
   text: string;
@@ -33,6 +55,7 @@ export async function ingestUserMessage(input: {
   sessionId: string;
   runId: string;
   userMessageId: string;
+  assistantText?: string;
 }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const text = input.text.trim();
@@ -104,6 +127,10 @@ export async function ingestUserMessage(input: {
     input.requestId ? { requestId: input.requestId } : {},
   );
 
+  const assistantText =
+    (await latestAssistantAfterUserMessage(session.id, userMsg.createdAt)) ??
+    undefined;
+
   log.info("ingest.completed", {
     channel: input.channel,
     tenantId,
@@ -113,10 +140,20 @@ export async function ingestUserMessage(input: {
     agentId: agent.id,
   });
 
-  return {
+  const result: {
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    userMessageId: string;
+    assistantText?: string;
+  } = {
     threadId: thread.id,
     sessionId: session.id,
     runId: run.id,
     userMessageId: userMsg.id,
   };
+  if (assistantText !== undefined) {
+    result.assistantText = assistantText;
+  }
+  return result;
 }

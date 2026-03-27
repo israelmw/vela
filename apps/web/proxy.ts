@@ -2,21 +2,26 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 /**
- * When VELA_SITE_PASSWORD is set, require HTTP Basic Auth so a public URL
- * cannot burn AI/DB credits. Optional VELA_SITE_USER (default: vela).
+ * When VELA_SITE_PASSWORD is set, require HTTP Basic Auth only for the admin
+ * console and its API routes — not the public landing or other endpoints.
+ * Optional VELA_SITE_USER (default: vela).
  *
- * Not applied to:
- * - / (public landing)
- * - /api/health/* (uptime checks)
- * - /api/channels/* (Slack/Discord/Teams verify signatures themselves)
- * - /api/cron/* (protected by CRON_SECRET inside the route)
+ * Protected:
+ * - /console, /console/*
+ * - /api/console, /api/console/*
+ *
+ * Everything else (including /, webhooks, health, cron, other APIs) is not
+ * gated by this env. Use app-level auth or Vercel protections if you need more.
  */
-const PUBLIC_EXACT = ["/"];
-const PUBLIC_PREFIXES = [
-  "/api/health/",
-  "/api/channels/",
-  "/api/cron/",
-];
+function requiresSitePassword(pathname: string): boolean {
+  if (pathname === "/console" || pathname.startsWith("/console/")) {
+    return true;
+  }
+  if (pathname === "/api/console" || pathname.startsWith("/api/console/")) {
+    return true;
+  }
+  return false;
+}
 
 function safeEqualStr(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -51,10 +56,7 @@ export function proxy(req: NextRequest) {
   }
 
   const { pathname } = req.nextUrl;
-  if (
-    PUBLIC_EXACT.includes(pathname) ||
-    PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))
-  ) {
+  if (!requiresSitePassword(pathname)) {
     return NextResponse.next();
   }
 
